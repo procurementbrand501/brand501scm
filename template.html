@@ -1,0 +1,1652 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Brand501 글로벌 SCM 대시보드</title>
+    <style>
+        :root {
+            --bg-color: #f4f6f9;
+            --card-bg: #ffffff;
+            --text-main: #2c3e50;
+            --border-color: #e2e8f0;
+            --us-color: #ebf5ff;
+            --uk-color: #fef3c7;
+            --eu-color: #f0fdf4;
+            --danger-bg: #fee2e2;
+            --danger-text: #991b1b;
+            --warning-bg: #fef3c7;
+            --warning-text: #92400e;
+            --boundary-color: #475569;
+            --frozen-bg: #f1f5f9;
+            --frozen-text: #64748b;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Roboto, sans-serif; }
+        body { background-color: var(--bg-color); color: var(--text-main); padding: 20px; }
+
+        .header-container {
+            margin-bottom: 20px;
+            background: linear-gradient(120deg, #0f172a 0%, #1e3a8a 45%, #3b82f6 100%);
+            padding: 28px 32px; color: white; border-radius: 14px;
+            box-shadow: 0 8px 20px -6px rgba(30,58,138,0.45);
+            position: relative; overflow: hidden;
+        }
+        .header-container::before {
+            content: ""; position: absolute; top: -40%; right: -10%;
+            width: 280px; height: 280px;
+            background: radial-gradient(circle, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0) 70%);
+            border-radius: 50%;
+        }
+        .header-brand {
+            display: flex; align-items: center; gap: 10px;
+            font-size: 12px; font-weight: 700; letter-spacing: 0.18em;
+            color: #93c5fd; text-transform: uppercase; margin-bottom: 8px;
+        }
+        .header-brand .dot { width: 6px; height: 6px; background: #60a5fa; border-radius: 50%; }
+        .header-container h1 { font-size: 27px; font-weight: 800; margin-bottom: 6px; letter-spacing: -0.01em; }
+        .header-container p  { font-size: 13.5px; opacity: 0.85; position: relative; z-index: 1; }
+
+        .overview-section { margin-bottom: 20px; }
+        .overview-section h2 { font-size: 14px; font-weight: 600; color: #475569; margin-bottom: 10px; letter-spacing: 0.05em; text-transform: uppercase; }
+        .kpi-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 10px; }
+        .kpi-card { background: #ffffff; border-radius: 10px; padding: 16px 18px; border: 1px solid var(--border-color); }
+        .kpi-card.danger { background: #fff0f0; border-color: #fca5a5; }
+        .kpi-card.warning { background: #fffbeb; border-color: #fcd34d; }
+        .kpi-card.neutral { background: #ffffff; border-color: var(--border-color); }
+        .kpi-card.frozen { background: var(--frozen-bg); border-color: #cbd5e1; }
+        .kpi-card.air { background: #f3effe; border-color: #c4b5fd; }
+        .kpi-label { font-size: 12px; color: #64748b; margin-bottom: 6px; display: flex; align-items: center; gap: 5px; }
+        .kpi-label.danger { color: #991b1b; } .kpi-label.warning { color: #92400e; }
+        .kpi-label.frozen { color: #64748b; } .kpi-label.air { color: #5b21b6; }
+        .kpi-value { font-size: 22px; font-weight: 700; color: #1e293b; line-height: 1.2; }
+        .kpi-value.danger { color: #b91c1c; } .kpi-value.warning { color: #b45309; }
+        .kpi-value.frozen { color: #475569; } .kpi-value.air { color: #5b21b6; }
+        .kpi-value span { font-size: 13px; font-weight: 400; color: #64748b; margin-left: 2px; }
+        .kpi-value.danger span { color: #b91c1c; opacity: 0.8; }
+        .kpi-value.warning span { color: #b45309; opacity: 0.8; }
+        .kpi-value.frozen span { color: #475569; opacity: 0.8; }
+        .kpi-value.air span { color: #5b21b6; opacity: 0.8; }
+        .kpi-sub { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+        .kpi-sub.danger { color: #f87171; } .kpi-sub.warning { color: #f59e0b; }
+        .kpi-sub.frozen { color: #94a3b8; } .kpi-sub.air { color: #8b5cf6; }
+        .kpi-region-breakdown { display: flex; gap: 10px; margin-top: 6px; }
+        .kpi-region-breakdown span { font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 600; }
+        .kpi-region-breakdown .r-us { background: #dbeafe; color: #1e40af; }
+        .kpi-region-breakdown .r-uk { background: #fef3c7; color: #92400e; }
+        .kpi-region-breakdown .r-eu { background: #dcfce7; color: #065f46; }
+        .pipeline-card { background: #ffffff; border: 1px solid var(--border-color); border-radius: 10px; padding: 16px 18px; }
+        .pipeline-label { font-size: 12px; color: #64748b; margin-bottom: 10px; font-weight: 600; }
+        .pipeline-bar-wrap { display: flex; height: 22px; border-radius: 6px; overflow: hidden; gap: 2px; }
+        .pipeline-air  { background: #6d28d9; display: flex; align-items: center; justify-content: center; transition: width .5s; }
+        .pipeline-sea  { background: #1d4ed8; display: flex; align-items: center; justify-content: center; transition: width .5s; }
+        .pipeline-bar-text { font-size: 11px; font-weight: 600; color: #fff; white-space: nowrap; padding: 0 6px; }
+        .pipeline-detail { display: flex; justify-content: space-between; margin-top: 6px; }
+        .pipeline-detail span { font-size: 11px; color: #64748b; }
+
+        .tab-bar { display: flex; gap: 6px; margin-bottom: 0; padding-left: 4px; }
+        .tab-btn { padding: 10px 26px; border: none; border-radius: 10px 10px 0 0; font-size: 14px; font-weight: 600; cursor: pointer; background: #dbe2ec; color: #64748b; transition: background .2s, color .2s; }
+        .tab-btn:hover { background: #c8d2e0; }
+        .tab-btn.active { background: #1e3a8a; color: #ffffff; }
+        /* 탭 패널 자체를 흰색 카드로 — 툴바와 테이블이 탭에 자연스럽게 붙어 보이도록 */
+        .tab-panel { display: none; background: var(--card-bg); border-radius: 0 12px 12px 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+        .tab-panel.active { display: block; }
+        .table-container { overflow-x: auto; padding: 0 15px 15px; }
+        table { width: 100%; border-collapse: collapse; text-align: center; font-size: 13px; min-width: 1750px; }
+        thead tr:first-child th { font-size: 14px; font-weight: 700; padding: 12px; border-bottom: 2px solid var(--border-color); }
+        thead tr:last-child  th { font-size: 12px; font-weight: 600; padding: 10px; background-color: #f8fafc; border-bottom: 2px solid var(--border-color); }
+        th, td { border: 1px solid var(--border-color); padding: 10px; vertical-align: middle; }
+        .region-boundary { border-right: 3px solid var(--boundary-color) !important; }
+        .col-info { background-color: #ffffff; }
+        .col-us   { background-color: var(--us-color); }
+        .col-uk   { background-color: var(--uk-color); }
+        .col-eu   { background-color: var(--eu-color); }
+        .font-bold { font-weight: 700; }
+        td.font-bold.col-code { max-width: 90px; width: 90px; word-break: break-all; white-space: normal; font-size: 11px; line-height: 1.3; }
+        .text-left { text-align: left; padding-left: 15px; }
+        .total-stock-cell { color: #1e40af; background-color: rgba(59,130,246,0.05); }
+        .badge-danger  { background-color: var(--danger-bg);  color: var(--danger-text);  font-weight: 700; padding: 3px 8px; border-radius: 4px; display: inline-block; }
+        .badge-warning { background-color: var(--warning-bg); color: var(--warning-text); font-weight: 700; padding: 3px 8px; border-radius: 4px; display: inline-block; }
+        .badge-air     { background-color: #ede9fe; color: #5b21b6; font-weight: 700; padding: 3px 8px; border-radius: 4px; display: inline-block; }
+        .badge-frozen  { background-color: var(--frozen-bg); color: var(--frozen-text); font-weight: 700; padding: 3px 8px; border-radius: 4px; display: inline-block; }
+        .badge-spike   { background-color: #fce7f3; color: #9d174d; font-weight: 700; padding: 3px 8px; border-radius: 4px; display: inline-block; cursor: help; }
+
+        /* 시점 비교 델타 배지 */
+        .delta { font-size: 10.5px; font-weight: 700; padding: 1px 4px; border-radius: 3px; white-space: nowrap; cursor: help; }
+        .delta-up    { background:#fef2f2; color:#b91c1c; }   /* 증가 = 빨강(수량↑) */
+        .delta-down  { background:#eff6ff; color:#1d4ed8; }   /* 감소 = 파랑 */
+        .delta-days  { background:#f1f5f9; color:#475569; }   /* 회전일 변화 = 중립(좋고나쁨 단정 안 함) */
+        .delta-flat  { background:#f8fafc; color:#94a3b8; font-weight:600; }
+        .delta-new   { background:#dcfce7; color:#15803d; }
+        .delta-alert { background:#fef3c7; color:#b45309; }   /* 안전→항공긴급 위험전이 */
+
+        /* 툴바는 카드(tab-panel) 안 상단 영역 — 아래 구분선으로 테이블과 분리 */
+        .toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 14px; padding: 14px 16px; border-bottom: 1px solid var(--border-color); margin-bottom: 12px; }
+        .filter-group { display: flex; gap: 6px; flex-wrap: wrap; }
+        .filter-btn { padding: 6px 16px; border: 1.5px solid #cbd5e1; border-radius: 20px; font-size: 12.5px; font-weight: 600; cursor: pointer; background: #ffffff; color: #475569; transition: all .15s; user-select: none; }
+        .filter-btn:hover { border-color: #94a3b8; background: #f8fafc; }
+        .filter-btn.on-us { background: #1e3a8a; color: #fff; border-color: #1e3a8a; }
+        .filter-btn.on-uk { background: #92400e; color: #fff; border-color: #92400e; }
+        .filter-btn.on-eu { background: #065f46; color: #fff; border-color: #065f46; }
+
+        .plc-filter-group { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: #475569; background: #f8fafc; border: 1px solid var(--border-color); border-radius: 20px; padding: 5px 14px; }
+        .plc-filter-label { font-weight: 600; color: #64748b; }
+        .plc-filter-group label { display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; white-space: nowrap; }
+        .plc-filter-group input[type="checkbox"] { cursor: pointer; accent-color: #1e3a8a; }
+
+        .table-footer-row td { font-weight: 700; background: #f8fafc; border-top: 2px solid #94a3b8; }
+        .table-footer-row .footer-value { color: #1e3a8a; }
+
+        .search-box input { padding: 8px 15px; width: 250px; border: 1px solid var(--border-color); border-radius: 20px; font-size: 13px; transition: border-color .15s, box-shadow .15s; }
+        .search-box input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
+
+        .clickable-name { color: #1e40af; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+        .clickable-name:hover { color: #1e3a8a; background: #eff6ff; }
+
+        .modal-backdrop {
+            display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(15,23,42,0.55); z-index: 1000;
+            justify-content: center; align-items: flex-start; padding: 40px 20px; overflow-y: auto;
+        }
+        .modal-backdrop.show { display: flex; }
+        .modal { background: #ffffff; border-radius: 12px; width: 100%; max-width: 1100px; box-shadow: 0 20px 50px -10px rgba(0,0,0,0.3); overflow: hidden; }
+        .modal-header { background: linear-gradient(135deg, #1e3a8a, #3b82f6); color: #fff; padding: 18px 22px; display: flex; justify-content: space-between; align-items: center; }
+        .modal-header h3 { font-size: 17px; font-weight: 700; }
+        .modal-header .sub { font-size: 12px; opacity: 0.85; margin-top: 3px; }
+        .modal-close { background: rgba(255,255,255,0.18); border: none; color: #fff; width: 30px; height: 30px; border-radius: 6px; cursor: pointer; font-size: 18px; }
+        .modal-close:hover { background: rgba(255,255,255,0.3); }
+        .modal-body { padding: 20px 22px; }
+
+        /* 상위 탭 (워터폴 / 입고 예정) */
+        .modal-top-tabs { display:flex; gap:8px; margin-bottom:14px; border-bottom:2px solid var(--border-color); }
+        .modal-top-btn {
+            padding:9px 20px; border:none; background:transparent;
+            font-size:13px; font-weight:700; cursor:pointer; color:#64748b;
+            border-bottom:3px solid transparent; margin-bottom:-2px;
+            transition: color .15s;
+        }
+        .modal-top-btn.active { color:#1e3a8a; border-bottom-color:#1e3a8a; }
+        .modal-top-btn:hover { color:#1e3a8a; }
+
+        .modal-region-tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+        .modal-region-btn { padding: 7px 18px; border: none; border-radius: 6px 6px 0 0; font-size: 13px; font-weight: 600; cursor: pointer; background: #e2e8f0; color: #475569; }
+        .modal-region-btn.active { background: #1e3a8a; color: #fff; }
+        .modal-region-btn.disabled { background: #f1f5f9; color: #94a3b8; cursor: not-allowed; }
+        .waterfall-table { width: 100%; min-width: auto; border-collapse: collapse; font-size: 12px; }
+        .waterfall-table th { background: #f8fafc; padding: 8px 10px; border: 1px solid var(--border-color); font-weight: 600; }
+        .waterfall-table td { padding: 7px 10px; border: 1px solid var(--border-color); text-align: right; }
+        .waterfall-table td.month-cell, .waterfall-table td.week-cell { text-align: center; }
+        .waterfall-row-negative { background: #fee2e2; }
+        .waterfall-row-negative td { color: #991b1b; font-weight: 600; }
+        .waterfall-row-incoming { background: #ecfdf5; }
+        .modal-info-bar { font-size: 12px; color: #64748b; margin-bottom: 10px; }
+        .modal-info-bar strong { color: #1e293b; }
+
+        .footer-credit { text-align: right; font-size: 11.5px; color: #94a3b8; margin-top: 24px; padding-top: 14px; border-top: 1px solid var(--border-color); letter-spacing: 0.02em; }
+        .footer-credit span { font-weight: 600; color: #64748b; }
+    </style>
+</head>
+<body>
+
+<div class="header-container">
+    <div class="header-brand"><span class="dot"></span>BRAND501 · SUPPLY CHAIN INTELLIGENCE</div>
+    <h1>Brand501 글로벌 SCM 대시보드</h1>
+    <p>정렬 기준: 마스터 계정 상품라인 -> 통합 제품명 그룹화 순 | 필터링: 재고·판매·국내재고가 모두 0인 품목만 제외 (결품 판매중 SKU는 🚨 배지로 표시)</p>
+    <p id="last-updated" style="margin-top:6px; font-size:12px; opacity:0.75;">최종 갱신: __LAST_UPDATED_FROM_PYTHON__</p>
+    <div style="margin-top:8px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <label style="font-size:12px; opacity:0.9;">🕐 시점 비교:
+            <select id="compare-select" onchange="onCompareChange(this.value)"
+                    style="margin-left:4px; padding:3px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.3); background:rgba(255,255,255,0.12); color:#fff; font-size:12px;">
+                <option value="" style="color:#1e293b;">비교 끄기 (현재만)</option>
+            </select>
+        </label>
+        <span id="compare-hint" style="font-size:11px; opacity:0.7;"></span>
+    </div>
+</div>
+
+<div class="overview-section">
+    <h2>📊 공급망 현황 Overview</h2>
+    <div class="kpi-grid">
+        <div class="kpi-card neutral">
+            <div class="kpi-label">📦 총 재고 수량</div>
+            <div class="kpi-value" id="kpi-total-stock">— <span>EA</span></div>
+            <div class="kpi-sub" id="kpi-region-ratio">계산 중...</div>
+        </div>
+        <div class="kpi-card air">
+            <div class="kpi-label air">✈️ 항공 긴급 필요</div>
+            <div class="kpi-value air" id="kpi-urgent">— <span>SKU</span></div>
+            <div class="kpi-region-breakdown">
+                <span class="r-us" id="kpi-urgent-us">US 0</span>
+                <span class="r-uk" id="kpi-urgent-uk">UK 0</span>
+                <span class="r-eu" id="kpi-urgent-eu">EU 0</span>
+            </div>
+        </div>
+        <div class="kpi-card warning">
+            <div class="kpi-label warning">📉 안전재고 미달</div>
+            <div class="kpi-value warning" id="kpi-safety-breach">— <span>SKU</span></div>
+            <div class="kpi-sub warning" id="kpi-safety-shortage">총 부족 수량 계산 중...</div>
+        </div>
+        <div class="kpi-card neutral">
+            <div class="kpi-label">🕐 평균 회전일</div>
+            <div class="kpi-value" id="kpi-avg-days">— <span>일</span></div>
+            <div class="kpi-sub">판매 발생 SKU 기준 가중 평균</div>
+        </div>
+        <div class="kpi-card neutral">
+            <div class="kpi-label">✈️ 이동중 재고</div>
+            <div class="kpi-value" id="kpi-transit">— <span>EA</span></div>
+            <div class="kpi-sub" id="kpi-transit-sub">항공 / 해상 내역 계산 중...</div>
+        </div>
+        <div class="kpi-card frozen">
+            <div class="kpi-label frozen">⏸️ 발주 동결 대상</div>
+            <div class="kpi-value frozen" id="kpi-overstock">— <span>SKU</span></div>
+            <div class="kpi-sub frozen">회전일 365일 초과 (과다 재고, 신규 발주 보류 검토)</div>
+        </div>
+        <div class="kpi-card warning" id="kpi-card-swing" onclick="toggleSwingFilter()"
+             style="cursor:pointer;" title="클릭하면 급변동 SKU만 표시 / 해제">
+            <div class="kpi-label warning">📊 포캐스팅 급변동</div>
+            <div class="kpi-value warning" id="kpi-fcst-swing">— <span>SKU</span></div>
+            <div class="kpi-sub warning">
+                <select id="fcst-month-select" onchange="onFcstMonthChange(this.value)" onclick="event.stopPropagation();"
+                        style="padding:1px 4px; border-radius:4px; border:1px solid #fcd34d; font-size:11px;"></select>
+                <span id="kpi-swing-sub">직전월 대비 ±30%</span>
+            </div>
+        </div>
+    </div>
+    <div class="pipeline-card">
+        <div class="pipeline-label">🚢 인바운드 파이프라인 — 권역별 항공 vs 해상</div>
+        <div id="pipeline-regions"></div>
+    </div>
+</div>
+
+<div class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab('tab1', this)">📦 개별 코드 보기</button>
+    <button class="tab-btn"        onclick="switchTab('tab2', this)">🗂️ 통합 제품명 보기</button>
+    <button class="tab-btn"        onclick="switchTab('tab3', this)">📦 부킹 관리</button>
+</div>
+
+<div id="tab1" class="tab-panel active">
+    <div class="toolbar">
+        <div class="filter-group">
+            <button class="filter-btn" id="f1-us" onclick="toggleFilter('1','us')">✈️ 미국 항공 긴급</button>
+            <button class="filter-btn" id="f1-uk" onclick="toggleFilter('1','uk')">✈️ 영국 항공 긴급</button>
+            <button class="filter-btn" id="f1-eu" onclick="toggleFilter('1','eu')">✈️ 유럽 항공 긴급</button>
+        </div>
+        <div class="plc-filter-group">
+            <span class="plc-filter-label">PLC 표시:</span>
+            <label><input type="checkbox" checked onchange="togglePlcFilter('1','운영',this)"> 🟢 운영</label>
+            <label><input type="checkbox" checked onchange="togglePlcFilter('1','단종',this)"> ⏸️ 단종</label>
+            <label><input type="checkbox" checked onchange="togglePlcFilter('1','정보없음',this)"> ❔ 정보없음</label>
+        </div>
+        <div class="search-box">
+            <input type="text" id="searchInput1" onkeyup="applyFilters('1')" placeholder="품목코드, 제품명 검색...">
+        </div>
+    </div>
+    <div class="table-container">
+        <table id="scmTable1">
+            <thead>
+                <tr>
+                    <th colspan="3" class="col-info region-boundary">품목 마스터 정보</th>
+                    <th colspan="8" class="col-us region-boundary" style="color:#1e3a8a;">미국 대륙 (US)</th>
+                    <th colspan="8" class="col-uk region-boundary" style="color:#92400e;">영국 (UK)</th>
+                    <th colspan="8" class="col-eu" style="color:#065f46;">유럽 연합 (EU)</th>
+                </tr>
+                <tr>
+                    <th class="col-info">품목코드</th>
+                    <th class="col-info">제품명</th>
+                    <th class="col-info region-boundary">PLC</th>
+                    <th class="col-us">창고재고</th><th class="col-us">항공이동</th><th class="col-us">해상이동</th>
+                    <th class="col-us" style="background-color:#dbeafe;">총 재고</th>
+                    <th class="col-us">일판매</th>
+                    <th class="col-us" style="background-color:#fdf2e9;color:#d35400;">안전재고</th>
+                    <th class="col-us" style="background-color:#eef2ff;color:#4338ca;">안전대비%</th>
+                    <th class="col-us region-boundary">회전일</th>
+                    <th class="col-uk">창고재고</th><th class="col-uk">항공이동</th><th class="col-uk">해상이동</th>
+                    <th class="col-uk" style="background-color:#fef3c7;">총 재고</th>
+                    <th class="col-uk">일판매</th>
+                    <th class="col-uk" style="background-color:#fdf2e9;color:#d35400;">안전재고</th>
+                    <th class="col-uk" style="background-color:#eef2ff;color:#4338ca;">안전대비%</th>
+                    <th class="col-uk region-boundary">회전일</th>
+                    <th class="col-eu">창고재고</th><th class="col-eu">항공이동</th><th class="col-eu">해상이동</th>
+                    <th class="col-eu" style="background-color:#dcfce7;">총 재고</th>
+                    <th class="col-eu">일판매</th>
+                    <th class="col-eu" style="background-color:#fdf2e9;color:#d35400;">안전재고</th>
+                    <th class="col-eu" style="background-color:#eef2ff;color:#4338ca;">안전대비%</th>
+                    <th class="col-eu">회전일</th>
+                </tr>
+            </thead>
+            <tbody id="tbody1"></tbody>
+            <tfoot id="tfoot1"></tfoot>
+        </table>
+    </div>
+</div>
+
+<div id="tab2" class="tab-panel">
+    <div class="toolbar">
+        <div class="filter-group">
+            <button class="filter-btn" id="f2-us" onclick="toggleFilter('2','us')">✈️ 미국 항공 긴급</button>
+            <button class="filter-btn" id="f2-uk" onclick="toggleFilter('2','uk')">✈️ 영국 항공 긴급</button>
+            <button class="filter-btn" id="f2-eu" onclick="toggleFilter('2','eu')">✈️ 유럽 항공 긴급</button>
+        </div>
+        <div class="plc-filter-group">
+            <span class="plc-filter-label">PLC 표시:</span>
+            <label><input type="checkbox" checked onchange="togglePlcFilter('2','운영',this)"> 🟢 운영</label>
+            <label><input type="checkbox" checked onchange="togglePlcFilter('2','단종',this)"> ⏸️ 단종</label>
+            <label><input type="checkbox" checked onchange="togglePlcFilter('2','정보없음',this)"> ❔ 정보없음</label>
+        </div>
+        <div class="search-box">
+            <input type="text" id="searchInput2" onkeyup="applyFilters('2')" placeholder="품목코드, 제품명 검색...">
+        </div>
+    </div>
+    <div class="table-container">
+        <table id="scmTable2">
+            <thead>
+                <tr>
+                    <th colspan="3" class="col-info region-boundary">품목 마스터 정보 (제품명 클릭 시 24주 워터폴 / 국내 입고 예정)</th>
+                    <th colspan="8" class="col-us region-boundary" style="color:#1e3a8a;">미국 대륙 (US)</th>
+                    <th colspan="8" class="col-uk region-boundary" style="color:#92400e;">영국 (UK)</th>
+                    <th colspan="8" class="col-eu" style="color:#065f46;">유럽 연합 (EU)</th>
+                </tr>
+                <tr>
+                    <th class="col-info">통합코드</th>
+                    <th class="col-info">통합 제품명</th>
+                    <th class="col-info region-boundary">PLC</th>
+                    <th class="col-us">창고재고</th><th class="col-us">항공이동</th><th class="col-us">해상이동</th>
+                    <th class="col-us" style="background-color:#dbeafe;">총 재고</th>
+                    <th class="col-us">일판매</th>
+                    <th class="col-us" style="background-color:#fdf2e9;color:#d35400;">안전재고</th>
+                    <th class="col-us" style="background-color:#eef2ff;color:#4338ca;">안전대비%</th>
+                    <th class="col-us region-boundary">회전일</th>
+                    <th class="col-uk">창고재고</th><th class="col-uk">항공이동</th><th class="col-uk">해상이동</th>
+                    <th class="col-uk" style="background-color:#fef3c7;">총 재고</th>
+                    <th class="col-uk">일판매</th>
+                    <th class="col-uk" style="background-color:#fdf2e9;color:#d35400;">안전재고</th>
+                    <th class="col-uk" style="background-color:#eef2ff;color:#4338ca;">안전대비%</th>
+                    <th class="col-uk region-boundary">회전일</th>
+                    <th class="col-eu">창고재고</th><th class="col-eu">항공이동</th><th class="col-eu">해상이동</th>
+                    <th class="col-eu" style="background-color:#dcfce7;">총 재고</th>
+                    <th class="col-eu">일판매</th>
+                    <th class="col-eu" style="background-color:#fdf2e9;color:#d35400;">안전재고</th>
+                    <th class="col-eu" style="background-color:#eef2ff;color:#4338ca;">안전대비%</th>
+                    <th class="col-eu">회전일</th>
+                </tr>
+            </thead>
+            <tbody id="tbody2"></tbody>
+            <tfoot id="tfoot2"></tfoot>
+        </table>
+    </div>
+</div>
+
+<div id="tab3" class="tab-panel">
+    <div id="booking-summary-panel" style="padding:14px 4px;"></div>
+    <div class="toolbar">
+        <div class="search-box">
+            <input type="text" id="searchInput3" onkeyup="renderBookingTable()" placeholder="품목코드, 제품명 검색...">
+        </div>
+    </div>
+    <div style="padding:8px 4px; font-size:12px; color:#64748b;" id="booking-pallet-warning"></div>
+    <div class="table-container">
+        <table id="scmTable3">
+            <thead id="thead3"></thead>
+            <tbody id="tbody3"></tbody>
+            <tfoot id="tfoot3"></tfoot>
+        </table>
+    </div>
+</div>
+
+<!-- 모달 -->
+<div class="modal-backdrop" id="waterfall-modal" onclick="closeModalOnBg(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-header">
+            <div>
+                <h3 id="modal-title">제품 상세</h3>
+                <div class="sub" id="modal-subtitle"></div>
+            </div>
+            <button class="modal-close" onclick="closeWaterfallModal()">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="modal-info-bar" id="modal-info-bar"></div>
+
+            <!-- 상위 탭 -->
+            <div class="modal-top-tabs">
+                <button class="modal-top-btn active" id="modal-top-waterfall" onclick="switchModalTop('waterfall')">📉 재고 소진 워터폴</button>
+                <button class="modal-top-btn" id="modal-top-inbound" onclick="switchModalTop('inbound')">📥 국내 입고 예정</button>
+                <button class="modal-top-btn" id="modal-top-daily" onclick="switchModalTop('daily')">📈 일별 판매 (28일)</button>
+            </div>
+
+            <!-- 워터폴 영역 -->
+            <div id="modal-waterfall-section">
+                <div class="modal-region-tabs">
+                    <button class="modal-region-btn active" id="modal-tab-us" onclick="switchModalRegion('us')">🇺🇸 미국 (US)</button>
+                    <button class="modal-region-btn" id="modal-tab-uk" onclick="switchModalRegion('uk')">🇬🇧 영국 (UK)</button>
+                    <button class="modal-region-btn" id="modal-tab-eu" onclick="switchModalRegion('eu')">🇪🇺 유럽 (EU)</button>
+                </div>
+                <div id="modal-waterfall-content"></div>
+            </div>
+
+            <!-- 국내 입고 예정 영역 -->
+            <div id="modal-inbound-section" style="display:none;">
+                <div id="modal-inbound-content"></div>
+            </div>
+
+            <!-- 일별 판매 추이 영역 -->
+            <div id="modal-daily-section" style="display:none;">
+                <div id="modal-daily-content"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="footer-credit">Designed by <span>ko</span></div>
+
+<script>
+    const rawData       = __DATA_FROM_PYTHON__;
+    const groupedData   = __GROUPED_DATA_FROM_PYTHON__;
+    const waterfallData = __WATERFALL_DATA_FROM_PYTHON__;
+    const inboundData   = __INBOUND_DATA_FROM_PYTHON__;
+    const costMeta      = __COST_META_FROM_PYTHON__;
+    const palletMeta    = __PALLET_META_FROM_PYTHON__;
+    const inboundSkuData = __INBOUND_SKU_DATA_FROM_PYTHON__;
+    const dailySalesData = __DAILY_SALES_FROM_PYTHON__;
+    const snapshotHistory = __SNAPSHOT_HISTORY_FROM_PYTHON__;
+
+    /* ══════════ 포캐스팅 급변동 ══════════
+       직전월 대비 해당 월 판매예정(US+UK+EU 합계)이 ±30% 이상 변한 SKU를 찾는다.
+       월별 판매예정은 이미 각 행의 fcst 필드에 있어서 별도 데이터 주입 없이 프론트에서 계산. */
+    const SWING_THRESHOLD = 0.30;
+    let swingMonth = null;      // 판정 대상 월 ('YYYY-MM')
+    let swingFilterOn = false;  // KPI 카드 클릭 시 급변동 SKU만 표시
+
+    function prevMonthKey(mk) {
+        const [y, m] = mk.split('-').map(Number);
+        return m === 1 ? `${y-1}-12` : `${y}-${String(m-1).padStart(2,'0')}`;
+    }
+
+    function getSwing(row, monthKey) {
+        if (!monthKey || !row.fcst) return null;
+        const cur = row.fcst[monthKey], prev = row.fcst[prevMonthKey(monthKey)];
+        if (!cur || !prev) return null;
+        const c = (cur.us||0) + (cur.uk||0) + (cur.eu||0);
+        const p = (prev.us||0) + (prev.uk||0) + (prev.eu||0);
+        if (p <= 0) return c > 0 ? { kind:'new', cur:c, prev:p, rate:null } : null;
+        const rate = (c - p) / p;
+        if (rate >= SWING_THRESHOLD)  return { kind:'up',   cur:c, prev:p, rate };
+        if (rate <= -SWING_THRESHOLD) return { kind:'down', cur:c, prev:p, rate };
+        return null;
+    }
+
+    function makeSwingBadge(row) {
+        const s = getSwing(row, swingMonth);
+        if (!s) return '';
+        const label = s.kind === 'new'
+            ? '신규계획'
+            : `${s.rate > 0 ? '+' : ''}${Math.round(s.rate*100)}%`;
+        const icon = s.kind === 'down' ? '📉' : '📈';
+        const cls  = s.kind === 'down' ? 'delta-down' : 'delta-up';
+        return ` <span class="delta ${cls}" title="${swingMonth} 판매예정 ${s.cur.toLocaleString()} vs 직전월 ${s.prev.toLocaleString()}">${icon}${label}</span>`;
+    }
+
+    /* ══════════ 시점 비교(델타) ══════════
+       compareDate가 설정되면 각 행의 총재고/일판매/회전일 옆에 그 시점 대비 변화(▲▼)를 표시.
+       비교 데이터는 과거 동결본(snapshotHistory)에서 읽음 — 판매가 소급 재집계돼도 과거 시점은 고정. */
+    let compareDate = null;
+
+    function pastVal(tabKey, code, field) {
+        if (!compareDate) return undefined;
+        const snap = snapshotHistory[tabKey] && snapshotHistory[tabKey][compareDate];
+        if (!snap) return undefined;
+        const row = snap[String(code)];
+        return row ? row[field] : undefined;
+    }
+    function isNewSince(tabKey, code) {
+        if (!compareDate) return false;
+        const snap = snapshotHistory[tabKey] && snapshotHistory[tabKey][compareDate];
+        return snap ? !(String(code) in snap) : false;
+    }
+    // 숫자 델타 (총재고, 일판매)
+    function deltaNum(cur, tabKey, code, field) {
+        if (!compareDate) return '';
+        if (isNewSince(tabKey, code)) return ` <span class="delta delta-new">NEW</span>`;
+        const prev = pastVal(tabKey, code, field);
+        if (prev === undefined || prev === null) return '';
+        const d = cur - prev;
+        if (d === 0) return ` <span class="delta delta-flat">±0</span>`;
+        const arrow = d > 0 ? '▲' : '▼';
+        return ` <span class="delta ${d>0?'delta-up':'delta-down'}" title="${compareDate}: ${prev.toLocaleString()}">${arrow}${Math.abs(d).toLocaleString()}</span>`;
+    }
+    // 회전일 델타 (문자열 "48"/"여유" 처리). 회전일 감소가 꼭 나쁜 게 아니라 색은 중립.
+    function deltaDays(cur, region, tabKey, code, isHeavy) {
+        if (!compareDate) return '';
+        if (isNewSince(tabKey, code)) return '';
+        const prev = pastVal(tabKey, code, 'us_days'.replace('us', region));
+        if (prev === undefined || prev === null) return '';
+        const c = parseInt(cur), p = parseInt(prev);
+        if (isNaN(c) && isNaN(p)) return '';
+        // 위험구간 전이 감지: 과거엔 항공 긴급이 아니었는데 지금 긴급 → 강조 (재집계로 갑자기 튀는 케이스)
+        const nowAir = !isNaN(c) && (region==='us' ? c <= 45+(isHeavy?30:0) : c <= 60+(isHeavy?30:0));
+        const pastAir = !isNaN(p) && (region==='us' ? p <= 45+(isHeavy?30:0) : p <= 60+(isHeavy?30:0));
+        if (nowAir && !pastAir) return ` <span class="delta delta-alert" title="${compareDate}: ${prev}일 → 항공 긴급권 진입">⚠︎ 위험전이</span>`;
+        if (isNaN(c) || isNaN(p)) {
+            if (String(cur) !== String(prev)) return ` <span class="delta delta-flat" title="${compareDate}: ${prev}">${prev}→</span>`;
+            return '';
+        }
+        const d = c - p;
+        if (d === 0) return '';
+        return ` <span class="delta delta-days" title="${compareDate}: ${prev}일">${d>0?'▲':'▼'}${Math.abs(d)}</span>`;
+    }
+
+    function computeKPI(data) {
+        let totalStock=0, usStock=0, ukStock=0, euStock=0;
+        let urgentSet=new Set();
+        let urgentUsCount=0, urgentUkCount=0, urgentEuCount=0;
+        let breachSet=new Set(), totalShortage=0;
+        let sumTotalForAvg=0, sumSalesForAvg=0;
+        let totalAir=0, totalSea=0;
+        let regionAir={us:0,uk:0,eu:0}, regionSea={us:0,uk:0,eu:0};
+        let overstockSet=new Set();
+        let totalValue=0, regionValue={us:0,uk:0,eu:0};
+
+        data.forEach((row, idx) => {
+            const usT=row.us_total, ukT=row.uk_total, euT=row.eu_total;
+            const usS=row.us_safety, ukS=row.uk_safety, euS=row.eu_safety;
+            totalStock += usT+ukT+euT;
+            usStock += usT; ukStock += ukT; euStock += euT;
+            totalAir += (row.us_air+row.uk_air+row.eu_air);
+            totalSea += (row.us_sea+row.uk_sea+row.eu_sea);
+            regionAir.us += row.us_air; regionAir.uk += row.uk_air; regionAir.eu += row.eu_air;
+            regionSea.us += row.us_sea; regionSea.uk += row.uk_sea; regionSea.eu += row.eu_sea;
+
+            totalValue += (row.stock_value || 0);
+            regionValue.us += (row.us_value || 0);
+            regionValue.uk += (row.uk_value || 0);
+            regionValue.eu += (row.eu_value || 0);
+
+            const usAirHit=isAirUrgent(row,'us'), ukAirHit=isAirUrgent(row,'uk'), euAirHit=isAirUrgent(row,'eu');
+            if (usAirHit) urgentUsCount++;
+            if (ukAirHit) urgentUkCount++;
+            if (euAirHit) urgentEuCount++;
+            if (usAirHit||ukAirHit||euAirHit) urgentSet.add(idx);
+
+            let breached=false;
+            if (usT<usS) { totalShortage+=(usS-usT); breached=true; }
+            if (ukT<ukS) { totalShortage+=(ukS-ukT); breached=true; }
+            if (euT<euS) { totalShortage+=(euS-euT); breached=true; }
+            if (breached) breachSet.add(idx);
+
+            if (row.us_sales>0) { sumTotalForAvg+=usT; sumSalesForAvg+=row.us_sales; }
+            if (row.uk_sales>0) { sumTotalForAvg+=ukT; sumSalesForAvg+=row.uk_sales; }
+            if (row.eu_sales>0) { sumTotalForAvg+=euT; sumSalesForAvg+=row.eu_sales; }
+
+            const usDays=parseInt(row.us_days), ukDays=parseInt(row.uk_days), euDays=parseInt(row.eu_days);
+            if ((!isNaN(usDays)&&usDays>365&&row.us_sales>0) ||
+                (!isNaN(ukDays)&&ukDays>365&&row.uk_sales>0) ||
+                (!isNaN(euDays)&&euDays>365&&row.eu_sales>0)) overstockSet.add(idx);
+        });
+
+        const avgDays = sumSalesForAvg>0 ? (sumTotalForAvg/sumSalesForAvg).toFixed(1) : '—';
+        const grandTotal = usStock+ukStock+euStock;
+        const usPct = grandTotal>0 ? Math.round(usStock/grandTotal*100) : 0;
+        const ukPct = grandTotal>0 ? Math.round(ukStock/grandTotal*100) : 0;
+        const euPct = grandTotal>0 ? (100-usPct-ukPct) : 0;
+
+        return { totalStock, usStock, ukStock, euStock, usPct, ukPct, euPct,
+                 urgentCount: urgentSet.size, urgentUsCount, urgentUkCount, urgentEuCount,
+                 breachCount: breachSet.size, totalShortage, avgDays,
+                 totalAir, totalSea, regionAir, regionSea, overstockCount: overstockSet.size,
+                 totalValue, regionValue };
+    }
+
+    function renderKPI() {
+        const k = computeKPI(groupedData);
+        document.getElementById('kpi-total-stock').innerHTML = k.totalStock.toLocaleString()+' <span>EA</span>';
+        document.getElementById('kpi-region-ratio').textContent = `US ${k.usPct}% · UK ${k.ukPct}% · EU ${k.euPct}%`;
+        document.getElementById('kpi-urgent').innerHTML = k.urgentCount+' <span>SKU</span>';
+        document.getElementById('kpi-urgent-us').textContent = `US ${k.urgentUsCount}`;
+        document.getElementById('kpi-urgent-uk').textContent = `UK ${k.urgentUkCount}`;
+        document.getElementById('kpi-urgent-eu').textContent = `EU ${k.urgentEuCount}`;
+        document.getElementById('kpi-safety-breach').innerHTML = k.breachCount+' <span>SKU</span>';
+        document.getElementById('kpi-safety-shortage').textContent = `총 부족 ${k.totalShortage.toLocaleString()} EA`;
+        document.getElementById('kpi-avg-days').innerHTML = k.avgDays+' <span>일</span>';
+        const transitTotal = k.totalAir+k.totalSea;
+        document.getElementById('kpi-transit').innerHTML = transitTotal.toLocaleString()+' <span>EA</span>';
+        document.getElementById('kpi-transit-sub').textContent = `항공 ${k.totalAir.toLocaleString()} · 해상 ${k.totalSea.toLocaleString()}`;
+        document.getElementById('kpi-overstock').innerHTML = k.overstockCount+' <span>SKU</span>';
+
+        renderPipelineRegions(k);
+    }
+
+    function renderPipelineRegions(k) {
+        const regions = [
+            { key:'us', label:'🇺🇸 US' },
+            { key:'uk', label:'🇬🇧 UK' },
+            { key:'eu', label:'🇪🇺 EU' }
+        ];
+        const html = regions.map(r => {
+            const air = k.regionAir[r.key], sea = k.regionSea[r.key];
+            const total = air + sea;
+            const airPct = total>0 ? Math.round(air/total*100) : 0;
+            const seaPct = 100 - airPct;
+            return `
+                <div style="margin-bottom:10px;">
+                    <div style="font-size:12px;font-weight:700;color:#475569;margin-bottom:4px;">${r.label}</div>
+                    <div class="pipeline-bar-wrap">
+                        <div class="pipeline-air" style="width:${airPct}%;"><span class="pipeline-bar-text">${total>0 ? airPct+'%' : ''}</span></div>
+                        <div class="pipeline-sea" style="width:${seaPct}%;"><span class="pipeline-bar-text">${total>0 ? seaPct+'%' : ''}</span></div>
+                    </div>
+                    <div class="pipeline-detail">
+                        <span>✈️ 항공 ${air.toLocaleString()} EA</span>
+                        <span>🚢 해상 ${sea.toLocaleString()} EA</span>
+                    </div>
+                </div>`;
+        }).join('');
+        document.getElementById('pipeline-regions').innerHTML = html;
+    }
+
+    // 억원 단위로 축약 표기 (예: 22,768,202,249 → 227.7억원)
+    function formatEok(won) {
+        return (won / 100000000).toFixed(1) + '억원';
+    }
+
+    // 테이블 맨 아래에 각 권역 "총 재고" 컬럼 밑으로 재고금액 합계 행을 추가 (총재고 수치 바로 아래에서 보이도록)
+    function renderValueFooter(tfootId, data) {
+        const el = document.getElementById(tfootId);
+        if (!el) return;
+        let usVal=0, ukVal=0, euVal=0;
+        data.forEach(row => {
+            usVal += (row.us_value || 0);
+            ukVal += (row.uk_value || 0);
+            euVal += (row.eu_value || 0);
+        });
+        const blank = '<td></td>';
+        const cell = (v) => `<td class="footer-value">💰${formatEok(v)}</td>`;
+        const unmatchedTitle = costMeta.unmatched_count > 0
+            ? `원가 미매칭 ${costMeta.unmatched_count}개 코드 (금액 제외): ${costMeta.unmatched_codes.join(', ')}`
+            : `전 SKU 원가 매칭 완료 (${costMeta.matched_count}개)`;
+        const flag = costMeta.unmatched_count > 0 ? ` ⚠️${costMeta.unmatched_count}개 미매칭` : '';
+
+        el.innerHTML = `<tr class="table-footer-row" title="${unmatchedTitle}">
+            <td colspan="3" style="text-align:left;padding-left:15px;">합계 (재고금액, 원가 기준)${flag}</td>
+            ${blank}${blank}${blank}${cell(usVal)}${blank}${blank}${blank}${blank}
+            ${blank}${blank}${blank}${cell(ukVal)}${blank}${blank}${blank}${blank}
+            ${blank}${blank}${blank}${cell(euVal)}${blank}${blank}${blank}${blank}
+        </tr>`;
+    }
+
+    function switchTab(tabId, btn) {
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById(tabId).classList.add('active');
+        btn.classList.add('active');
+    }
+
+    // 중량물은 항공 운임 프리미엄이 커서 경고를 30일 먼저 발동 — 해상으로 막을 시간을 확보 (안전재고 +30일과 세트)
+    const HEAVY_EXTRA_DAYS = 30;
+
+    function getDaysBadge(daysStr, region, isHeavy = false) {
+        if (daysStr === "여유") return `<span>${daysStr}</span>`;
+        const days = parseInt(daysStr);
+        if (isNaN(days)) return `<span>${daysStr}</span>`;
+        if (days > 365) return `<span class="badge-frozen">⏸️ ${daysStr}일</span>`;
+        const extra = isHeavy ? HEAVY_EXTRA_DAYS : 0;
+        if (region === 'us') {
+            if (days <= 45 + extra)  return `<span class="badge-air">✈️ ${daysStr}일</span>`;
+            if (days < 90 + extra)   return `<span class="badge-danger">🚨 ${daysStr}일</span>`;
+            if (days <= 120 + extra) return `<span class="badge-warning">⚠️ ${daysStr}일</span>`;
+        } else {
+            if (days <= 60 + extra)  return `<span class="badge-air">✈️ ${daysStr}일</span>`;
+            if (days < 180 + extra)  return `<span class="badge-danger">🚨 ${daysStr}일</span>`;
+            if (days <= 210 + extra) return `<span class="badge-warning">⚠️ ${daysStr}일</span>`;
+        }
+        return `<span>${daysStr}일</span>`;
+    }
+
+    function isAirUrgent(row, region) {
+        const daysStr = row[`${region}_days`];
+        if (daysStr === "여유") return false;
+        const days = parseInt(daysStr);
+        if (isNaN(days)) return false;
+        const extra = row.is_heavy ? HEAVY_EXTRA_DAYS : 0;
+        if (region === 'us') return days <= 45 + extra;
+        return days <= 60 + extra;
+    }
+
+    function isDanger(row, region) {
+        const total  = row[`${region}_total`];
+        const safety = row[`${region}_safety`];
+        if (safety <= 0) return false;
+        return total < safety;
+    }
+
+    function getPlcBadge(status) {
+        if (status === '단종') return `<span class="badge-frozen">⏸️ 단종</span>`;
+        if (status === '운영') return `<span style="color:#065f46;font-weight:700;">🟢 운영</span>`;
+        return `<span style="color:#94a3b8;">정보없음</span>`;
+    }
+
+    function getSafetyPctBadge(total, safety) {
+        if (!safety || safety <= 0) return `<span style="color:#94a3b8;">-</span>`;
+        const pct = Math.round(total / safety * 100);
+        if (pct < 100) return `<span class="badge-danger">${pct}%</span>`;
+        if (pct < 150) return `<span class="badge-warning">${pct}%</span>`;
+        return `<span style="color:#065f46;font-weight:600;">${pct}%</span>`;
+    }
+
+    function makeSalesCell(row, region, tabKey) {
+        const sales = row[`${region}_sales`];
+        const win = row[`${region}_sales_window`] || 28;
+        const winNote = win !== 28 ? `일판매 = 최근 ${win}일 평균 채택 (7·14·28일 중 최대 — 최근 판매 증가 반영)` : `일판매 = 최근 28일 평균`;
+        const dlt = deltaNum(sales, tabKey, row.code, `${region}_sales`);
+        if (!row[`${region}_spike`]) {
+            return win !== 28
+                ? `<td title="${winNote}"><span style="color:#9d174d;font-weight:600;">${sales.toLocaleString()}<sup style="font-size:9px;">${win}d</sup></span>${dlt}</td>`
+                : `<td>${sales.toLocaleString()}${dlt}</td>`;
+        }
+        const last7 = row[`${region}_last7`] || [];
+        return `<td title="⚡판매 급증 감지 — 최근 7일: ${last7.join(', ')} · ${winNote}">` +
+               `<span class="badge-spike">📈 ${sales.toLocaleString()}</span>${dlt}</td>`;
+    }
+
+    function makeRegionCells(row, region, isLast, tabKey) {
+        // 마지막 권역(EU)의 회전일 셀에는 권역 경계선을 긋지 않음
+        const daysCls = isLast ? '' : ' class="region-boundary"';
+        const totalDelta = deltaNum(row[`${region}_total`], tabKey, row.code, `${region}_total`);
+        const daysDelta = deltaDays(row[`${region}_days`], region, tabKey, row.code, row.is_heavy);
+        return `
+            <td>${row[`${region}_stock`].toLocaleString()}</td>
+            <td>${row[`${region}_air`].toLocaleString()}</td>
+            <td>${row[`${region}_sea`].toLocaleString()}</td>
+            <td class="font-bold total-stock-cell">${row[`${region}_total`].toLocaleString()}${totalDelta}</td>
+            ${makeSalesCell(row, region, tabKey)}
+            <td style="font-weight:500;color:#c0392b;">${row[`${region}_safety`].toLocaleString()}</td>
+            <td>${getSafetyPctBadge(row[`${region}_total`], row[`${region}_safety`])}</td>
+            <td${daysCls}>${getDaysBadge(row[`${region}_days`], region, row.is_heavy)}${daysDelta}</td>`;
+    }
+
+    function makeNameBadges(row) {
+        let badges = '';
+        if (row.is_heavy) {
+            badges += ` <span title="중량물 — 안전재고 +30일, 항공/위험 경고 임계선 +30일 적용 (해상으로 막을 시간 확보)" style="cursor:help;">⚖️</span>`;
+        }
+        const totalAll = row.us_total + row.uk_total + row.eu_total;
+        const salesAll = row.us_sales + row.uk_sales + row.eu_sales;
+        if (totalAll <= 0 && salesAll > 0) {
+            badges += ` <span class="badge-danger" title="전 지역 재고·이동중 0인데 판매 발생 중 — 즉시 발송 검토 (국내 재고 ${(row.kr_stock||0).toLocaleString()}개)">🚨 결품 판매중</span>`;
+        }
+        badges += makeSwingBadge(row);
+        return badges;
+    }
+
+    function makeRow(row, clickableName) {
+        const tabKey = clickableName ? 'tab2' : 'tab1';
+        const nameHtml = clickableName
+            ? `<td class="text-left clickable-name" title="클릭하여 24주 워터폴 / 국내 입고 예정 보기" onclick="openWaterfallModal('${escapeHtml(row['통합 제품명']||'')}')">${row.name}${makeNameBadges(row)}</td>`
+            : `<td class="text-left" title="라인: ${row['상품라인']||'미지정'} / 그룹: ${row['통합 제품명']||'미지정'}">${row.name}${makeNameBadges(row)}</td>`;
+        return `
+            <td class="font-bold col-code">${row.code}</td>
+            ${nameHtml}
+            <td class="region-boundary">${getPlcBadge(row.plc_status)}</td>
+            ${makeRegionCells(row, 'us', false, tabKey)}
+            ${makeRegionCells(row, 'uk', false, tabKey)}
+            ${makeRegionCells(row, 'eu', true, tabKey)}`;
+    }
+
+    function escapeHtml(s) { return String(s).replace(/'/g,"\\'").replace(/"/g,'&quot;'); }
+
+    function renderTable(tbodyId, data, clickable) {
+        const tbody = document.getElementById(tbodyId);
+        tbody.innerHTML = '';
+        data.forEach((row, idx) => {
+            const tr = document.createElement('tr');
+            tr.setAttribute('data-row-idx', idx);
+            tr.innerHTML = makeRow(row, clickable);
+            tbody.appendChild(tr);
+        });
+    }
+
+    const activeFilters = {
+        '1': { us:false, uk:false, eu:false },
+        '2': { us:false, uk:false, eu:false }
+    };
+
+    const plcFilters = {
+        '1': { '운영':true, '단종':true, '정보없음':true },
+        '2': { '운영':true, '단종':true, '정보없음':true }
+    };
+
+    function toggleFilter(tabIdx, region) {
+        activeFilters[tabIdx][region] = !activeFilters[tabIdx][region];
+        const btn = document.getElementById(`f${tabIdx}-${region}`);
+        btn.classList.remove('on-us','on-uk','on-eu');
+        if (activeFilters[tabIdx][region]) btn.classList.add(`on-${region}`);
+        applyFilters(tabIdx);
+    }
+
+    function togglePlcFilter(tabIdx, status, checkbox) {
+        plcFilters[tabIdx][status] = checkbox.checked;
+        applyFilters(tabIdx);
+    }
+
+    function applyFilters(tabIdx) {
+        const keyword = document.getElementById(`searchInput${tabIdx}`).value.toLowerCase();
+        const af = activeFilters[tabIdx];
+        const pf = plcFilters[tabIdx];
+        const anyFilter = af.us || af.uk || af.eu;
+        const data = tabIdx==='1' ? rawData : groupedData;
+        const tbody = document.getElementById(`tbody${tabIdx}`);
+        const rows = Array.from(tbody.getElementsByTagName('tr'));
+
+        function getRowGroup(row) {
+            const order = ['us','uk','eu'];
+            for (let i=0; i<order.length; i++) {
+                const r = order[i];
+                if (!af[r]) continue;
+                if (isAirUrgent(row, r)) return i*2 + 0;
+                if (isDanger(row, r))    return i*2 + 1;
+            }
+            return -1;
+        }
+
+        rows.forEach(tr => {
+            const idx = parseInt(tr.getAttribute('data-row-idx'));
+            const row = data[idx];
+            if (!row) { tr.style.display = 'none'; return; }
+
+            const tds = tr.getElementsByTagName('td');
+            const searchOk = keyword==='' ||
+                (tds[0] && tds[0].textContent.toLowerCase().includes(keyword)) ||
+                (tds[1] && tds[1].textContent.toLowerCase().includes(keyword));
+
+            const plcOk = pf[row.plc_status] !== false;
+            const swingOk = !swingFilterOn || !!getSwing(row, swingMonth);
+
+            let filterOk = true;
+            let groupKey = -1;
+            if (anyFilter) {
+                groupKey = getRowGroup(row);
+                filterOk = (groupKey >= 0);
+            }
+            tr.style.display = (searchOk && filterOk && plcOk && swingOk) ? '' : 'none';
+            tr.setAttribute('data-group-key', groupKey);
+        });
+
+        if (anyFilter) {
+            const visible = rows.filter(tr => tr.style.display !== 'none');
+            visible.sort((a, b) => {
+                const ga = parseInt(a.getAttribute('data-group-key'));
+                const gb = parseInt(b.getAttribute('data-group-key'));
+                if (ga !== gb) return ga - gb;
+                return parseInt(a.getAttribute('data-row-idx')) - parseInt(b.getAttribute('data-row-idx'));
+            });
+            visible.forEach(tr => tbody.appendChild(tr));
+        } else {
+            rows.sort((a, b) => parseInt(a.getAttribute('data-row-idx')) - parseInt(b.getAttribute('data-row-idx')));
+            rows.forEach(tr => tbody.appendChild(tr));
+        }
+    }
+
+    /* ══════════════════════════════════════════
+       모달 (워터폴 + 국내 입고 예정)
+    ══════════════════════════════════════════ */
+    let currentModalRow = null;
+
+    function openWaterfallModal(unifiedName) {
+        const row = groupedData.find(r => (r['통합 제품명']||'') === unifiedName);
+        if (!row) { alert('데이터를 찾을 수 없습니다: ' + unifiedName); return; }
+        currentModalRow = row;
+
+        document.getElementById('modal-title').textContent = `제품 상세 · ${row.name}`;
+        document.getElementById('modal-subtitle').textContent = `통합 제품명: ${unifiedName}`;
+
+        const today = new Date();
+        const mon = getMondayOf(today);
+        const baseInfo = `기준일: ${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')} (1주차 ${mon.getMonth()+1}/${mon.getDate()}~, 이번 주 제외 계산)`;
+
+        const allEvents = waterfallData[unifiedName] || [];
+        const schedules = allEvents.filter(s => s.date);
+        const tbdEvents = allEvents.filter(s => !s.date);
+        const usAirCnt = schedules.filter(s => s.region==='us'&&s.mode==='air').length;
+        const usSeaCnt = schedules.filter(s => s.region==='us'&&s.mode==='sea').length;
+        const ukAirCnt = schedules.filter(s => s.region==='uk'&&s.mode==='air').length;
+        const ukSeaCnt = schedules.filter(s => s.region==='uk'&&s.mode==='sea').length;
+        const euAirCnt = schedules.filter(s => s.region==='eu'&&s.mode==='air').length;
+        const euSeaCnt = schedules.filter(s => s.region==='eu'&&s.mode==='sea').length;
+        const tbdQty = tbdEvents.reduce((a, s) => a + s.qty, 0);
+        const tbdNote = tbdEvents.length
+            ? ` · <span style="color:#b45309;">⚠️ ETA 미정(TBD) ${tbdEvents.length}건 ${tbdQty.toLocaleString()}개</span>`
+            : '';
+        document.getElementById('modal-info-bar').innerHTML =
+            `<div style="margin-bottom:4px; color:#1e293b; font-weight:600;">${baseInfo}</div>` +
+            `입고 예정 이벤트: <strong>US 항공 ${usAirCnt}건 · 해상 ${usSeaCnt}건 · UK 항공 ${ukAirCnt}건 · 해상 ${ukSeaCnt}건 · EU 항공 ${euAirCnt}건 · 해상 ${euSeaCnt}건</strong>${tbdNote}`;
+
+        useFcstSales = false;   // 모달 열 때마다 기본값(실판매)으로 시작
+        switchModalTop('waterfall');
+        switchModalRegion('us');
+        document.getElementById('waterfall-modal').classList.add('show');
+    }
+
+    function closeWaterfallModal() {
+        document.getElementById('waterfall-modal').classList.remove('show');
+        currentModalRow = null;
+    }
+
+    function closeModalOnBg(e) {
+        if (e.target.id === 'waterfall-modal') closeWaterfallModal();
+    }
+
+    function switchModalTop(which) {
+        const tabs = ['waterfall', 'inbound', 'daily'];
+        tabs.forEach(t => {
+            document.getElementById(`modal-top-${t}`).classList.toggle('active', which === t);
+            document.getElementById(`modal-${t}-section`).style.display = (which === t) ? '' : 'none';
+        });
+        if (which === 'inbound') renderInbound();
+        if (which === 'daily') renderDailySales();
+    }
+
+    function switchModalRegion(region) {
+        document.getElementById('modal-tab-us').classList.toggle('active', region==='us');
+        document.getElementById('modal-tab-uk').classList.toggle('active', region==='uk');
+        document.getElementById('modal-tab-eu').classList.toggle('active', region==='eu');
+        renderWaterfall(region);
+    }
+
+    function getMondayOf(date) {
+        const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+        const day = d.getDay();
+        const diff = (day === 0 ? -6 : 1 - day);
+        d.setDate(d.getDate() + diff);
+        return d;
+    }
+    function addDays(date, days) {
+        const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+        d.setDate(d.getDate() + days);
+        return d;
+    }
+    function formatRange(start, end) {
+        const s = `${start.getMonth()+1}/${start.getDate()}`;
+        const e = `${end.getMonth()+1}/${end.getDate()}`;
+        return `${s}~${e}`;
+    }
+
+    /* 부킹 추천 규칙 (이번 주 = index 0 제외) */
+    const BOOKING_RULE = {
+        us: { airIdx: 6,  seaIdx: 13, airLabel: '6주', seaLabel: '13주' },
+        uk: { airIdx: 13, seaIdx: 26, airLabel: '13주', seaLabel: '26주' },
+        eu: { airIdx: 13, seaIdx: 26, airLabel: '13주', seaLabel: '26주' }
+    };
+
+    function calcBooking(rows, region) {
+        const rule = BOOKING_RULE[region];
+        const airRow = rows[Math.min(rule.airIdx, rows.length - 1)];
+        const seaRow = rows[Math.min(rule.seaIdx, rows.length - 1)];
+
+        const airDeficit = airRow ? airRow.closing : 0;
+        const seaDeficit = seaRow ? seaRow.closing : 0;
+
+        const air = airDeficit < 0 ? Math.abs(airDeficit) : 0;
+        let sea = 0;
+        if (seaDeficit < 0) {
+            sea = Math.abs(seaDeficit) - air;
+            if (sea < 0) sea = 0;
+        }
+        return { air, sea, airLabel: rule.airLabel, seaLabel: rule.seaLabel };
+    }
+
+    /* ══════════════════════════════════════════
+       부킹 관리 (항공/해상 PLT 산정 · 주차별)
+    ══════════════════════════════════════════ */
+    const REGION_LABEL = { us: '🇺🇸 US', uk: '🇬🇧 UK', eu: '🇪🇺 EU' };
+    const BOOKING_WEEK_COUNT = 3;
+
+    function daysSortValue(daysStr) {
+        if (daysStr === "여유") return Infinity;
+        const d = parseInt(daysStr);
+        return isNaN(d) ? Infinity : d;
+    }
+
+    /* weekOffset(0,1,2 = 1주차,2주차,3주차)만큼 BOOKING_RULE의 항공/해상 시간창을 그대로 밀어서
+       "이번 주에 부킹하면 그 시점 기준 몇 주 뒤 결품분을 커버하는지" 로직을 유지한 채 주차별 필요량을 얻는다. */
+    function calcWeeklyNeed(waterfall, region, weekOffset) {
+        const rule = BOOKING_RULE[region];
+        const airIdx = Math.min(rule.airIdx + weekOffset, waterfall.length - 1);
+        const seaIdx = Math.min(rule.seaIdx + weekOffset, waterfall.length - 1);
+        const airRow = waterfall[airIdx];
+        const seaRow = waterfall[seaIdx];
+        const airDeficit = airRow ? airRow.closing : 0;
+        const seaDeficit = seaRow ? seaRow.closing : 0;
+        const air = airDeficit < 0 ? Math.abs(airDeficit) : 0;
+        let sea = 0;
+        if (seaDeficit < 0) {
+            sea = Math.abs(seaDeficit) - air;
+            if (sea < 0) sea = 0;
+        }
+        return { air, sea };
+    }
+
+    /* 국내 입고 스케줄('6월' + '13~19 영업일 5일' 형식)을 실제 날짜로 추정.
+       데이터가 6월 시작~다음해 5월 구조라, 6~12월은 기준연도 / 1~5월은 +1년으로 처리 (모달 monthOrder와 동일 관례). */
+    function estimateInboundDate(monthStr, weekStr) {
+        const mMatch = String(monthStr || '').match(/(\d+)\s*월/);
+        if (!mMatch) return null;
+        const m = parseInt(mMatch[1]);
+        const today = new Date();
+        const baseYear = (today.getMonth() + 1 >= 6) ? today.getFullYear() : today.getFullYear() - 1;
+        const year = (m >= 6) ? baseYear : baseYear + 1;
+        const dayMatches = [...String(weekStr || '').matchAll(/(\d+)\s*~\s*\d+/g)];
+        const day = dayMatches.length ? parseInt(dayMatches[dayMatches.length - 1][1]) : 15;
+        return new Date(year, m - 1, day);
+    }
+
+    /* 코드별 국내 입고 예정을 부킹 주차 버킷으로 분류.
+       반환: { base: 이번 주까지(지연 포함) 도착 예정 수량, weeks: [1주차, 2주차, 3주차 도착 수량] } */
+    function bucketInbound(code, week1Start) {
+        const entry = inboundSkuData[(code || '').toUpperCase()];
+        const result = { base: 0, weeks: new Array(BOOKING_WEEK_COUNT).fill(0) };
+        if (!entry || !entry.items) return result;
+        const horizonEnd = addDays(week1Start, (BOOKING_WEEK_COUNT + 1) * 7);
+        entry.items.forEach(it => {
+            const d = estimateInboundDate(it.month, it.week);
+            if (!d || d >= horizonEnd) return;
+            const bucket1Start = addDays(week1Start, 7);
+            if (d < bucket1Start) { result.base += it.qty; return; } // 이번 주 이전(지연 포함) 도착분
+            const idx = Math.floor((d - bucket1Start) / (7 * 24 * 3600 * 1000));
+            if (idx >= 0 && idx < BOOKING_WEEK_COUNT) result.weeks[idx] += it.qty;
+        });
+        return result;
+    }
+
+    const INBOUND_ARRIVAL_RATE = 0.7; // 입고예정 중 그 주에 실제 들어온다고 보는 비율 (원본 엑셀 M=L×0.7)
+    // 나머지 30%는 다음 주에 들어오는 것으로 이월 (원본 엑셀 O = L×0.3 + N×0.7)
+
+    const REGIONS = ['us', 'uk', 'eu'];
+    const MODES = ['air', 'sea'];
+    const MODE_LABEL = { air: '✈️ 항공', sea: '🚢 해상' };
+
+    function computeWeeklyBookingPlan() {
+        const today = new Date();
+        const week1Start = getMondayOf(today);
+        const weekLabels = [];
+        for (let w = 0; w < BOOKING_WEEK_COUNT; w++) {
+            const start = addDays(week1Start, (w + 1) * 7);
+            const end = addDays(start, 6);
+            weekLabels.push({ label: `${w + 1}주차`, range: formatRange(start, end) });
+        }
+
+        const items = [];
+        rawData.forEach(row => {
+            const pallet = row.pallet_units || 0;
+            const inbound = bucketInbound(row.code, week1Start);
+
+            // 권역별 수요(결품분) — 주차별 원시 필요 PLT
+            const rawNeed = {}; // rawNeed[region][mode][w]
+            const days = {};
+            let hasAnyNeed = false;
+            REGIONS.forEach(region => {
+                days[region] = row[`${region}_days`];
+                rawNeed[region] = { air: [], sea: [] };
+                // 일판매 반올림이 0이어도 최근 7일 판매가 있으면 계산 — 판매 개시 직후 SKU가 부킹 플랜에서 누락되지 않도록
+                const dailySales = row[`${region}_sales`];
+                const recentSold = (row[`${region}_last7`] || []).some(x => x > 0);
+                const waterfall = (dailySales > 0 || recentSold) ? buildWaterfall(row, region) : null;
+                for (let w = 0; w < BOOKING_WEEK_COUNT; w++) {
+                    const need = waterfall ? calcWeeklyNeed(waterfall, region, w) : { air: 0, sea: 0 };
+                    if (need.air > 0 || need.sea > 0) hasAnyNeed = true;
+                    rawNeed[region].air.push(pallet > 0 ? Math.ceil(need.air / pallet) : (need.air > 0 ? null : 0));
+                    rawNeed[region].sea.push(pallet > 0 ? Math.ceil(need.sea / pallet) : (need.sea > 0 ? null : 0));
+                }
+            });
+            if (!hasAnyNeed) return;
+
+            // 한국(콜로세움) 발송 가능 재고 롤링 + 회전일 우선순위 자동 할당
+            // 시작: 가용재고 − B2B + 이번주 입고×70%. 이후 매주: 그 주 입고×70% + 지난 주 입고 잔여분 30%.
+            let krAvail = (row.kr_stock || 0) - (row.b2b_qty || 0) + inbound.base * INBOUND_ARRIVAL_RATE;
+            let prevArrival = inbound.base;
+            const allocSoFar = { us: { air: 0, sea: 0 }, uk: { air: 0, sea: 0 }, eu: { air: 0, sea: 0 } };
+            const weeks = [];
+
+            for (let w = 0; w < BOOKING_WEEK_COUNT; w++) {
+                krAvail += inbound.weeks[w] * INBOUND_ARRIVAL_RATE + prevArrival * (1 - INBOUND_ARRIVAL_RATE);
+                prevArrival = inbound.weeks[w];
+
+                const availPlt = pallet > 0 ? Math.floor(krAvail / pallet) : 0;
+                let pool = Math.max(0, availPlt);
+
+                // 이번 주 잔여 필요 = 원시 필요 − 이전 주까지 이미 할당한 양 (원본 엑셀 AG = S − U)
+                const need = {}, alloc = {};
+                REGIONS.forEach(r => { need[r] = {}; alloc[r] = { air: 0, sea: 0 }; });
+                REGIONS.forEach(r => MODES.forEach(m => {
+                    const raw = rawNeed[r][m][w];
+                    need[r][m] = (raw === null) ? null : Math.max(0, raw - allocSoFar[r][m]);
+                }));
+
+                // 할당: 항공 먼저(급한 순), 그 다음 해상(급한 순) — 같은 한국 재고 풀을 두고 경쟁
+                MODES.forEach(m => {
+                    REGIONS
+                        .filter(r => need[r][m] !== null && need[r][m] > 0)
+                        .sort((a, b) => daysSortValue(days[a]) - daysSortValue(days[b]))
+                        .forEach(r => {
+                            const give = Math.min(need[r][m], pool);
+                            if (give > 0) { alloc[r][m] = give; pool -= give; allocSoFar[r][m] += give; }
+                        });
+                });
+
+                const allocatedPlt = REGIONS.reduce((s, r) => s + alloc[r].air + alloc[r].sea, 0);
+                weeks.push({
+                    incoming: inbound.weeks[w],
+                    avail: krAvail,
+                    availPlt: pallet > 0 ? (krAvail / pallet) : null,
+                    need, alloc
+                });
+                krAvail -= allocatedPlt * pallet;
+            }
+
+            const minDays = Math.min(...REGIONS.map(r => daysSortValue(days[r])));
+            items.push({ code: row.code, name: row.name, days, minDays, pallet, weeks, heavy: !!row.is_heavy });
+        });
+        items.sort((a, b) => a.minDays - b.minDays);
+        return { weekLabels, items };
+    }
+
+    function renderBookingSummary(weekLabels, items) {
+        // totals[w][mode][region] = { need, alloc }
+        const totals = weekLabels.map(() => ({
+            air: { us: { need: 0, alloc: 0 }, uk: { need: 0, alloc: 0 }, eu: { need: 0, alloc: 0 } },
+            sea: { us: { need: 0, alloc: 0 }, uk: { need: 0, alloc: 0 }, eu: { need: 0, alloc: 0 } }
+        }));
+        items.forEach(it => it.weeks.forEach((wk, wi) => {
+            REGIONS.forEach(r => MODES.forEach(m => {
+                totals[wi][m][r].need += (wk.need[r][m] || 0);
+                totals[wi][m][r].alloc += wk.alloc[r][m];
+            }));
+        }));
+
+        let html = '<div style="display:flex; gap:16px; flex-wrap:wrap;">';
+        weekLabels.forEach((wl, wi) => {
+            [['air', '#5b21b6'], ['sea', '#1d4ed8']].forEach(([mode, color]) => {
+                const t = totals[wi][mode];
+                const line = REGIONS.map(r => `${r.toUpperCase()} <b>${t[r].alloc.toLocaleString()}</b>/${t[r].need.toLocaleString()}`).join(' · ');
+                html += `
+                    <div style="background:#f8fafc; border:1px solid var(--border-color); border-radius:8px; padding:12px 16px; min-width:230px;">
+                        <div style="font-size:12px; font-weight:700; color:#475569; margin-bottom:6px;">${wl.label} (${wl.range}) ${MODE_LABEL[mode]}</div>
+                        <div style="font-size:13px; color:${color}; font-weight:500;">${line} <span style="font-size:11px; font-weight:400; color:#64748b;">할당/필요 PLT</span></div>
+                    </div>`;
+            });
+        });
+        html += '</div>';
+        document.getElementById('booking-summary-panel').innerHTML = html;
+        return totals;
+    }
+
+    function renderBookingTable() {
+        const { weekLabels, items: allItems } = computeWeeklyBookingPlan();
+        const totals = renderBookingSummary(weekLabels, allItems);
+
+        const search = (document.getElementById('searchInput3').value || '').trim().toLowerCase();
+        const items = allItems.filter(it =>
+            !search || it.code.toLowerCase().includes(search) || it.name.toLowerCase().includes(search)
+        );
+
+        const regionThs = cls => REGIONS.map((r, i) => `<th${i === 2 ? ` class="${cls}"` : ''}>${r.toUpperCase()}</th>`).join('');
+        document.getElementById('thead3').innerHTML = `
+            <tr>
+                <th colspan="5" class="col-info region-boundary">품목 정보</th>
+                ${weekLabels.map(wl => `<th colspan="15" class="region-boundary" style="color:#1e3a8a;">${wl.label} (${wl.range})</th>`).join('')}
+            </tr>
+            <tr>
+                <th rowspan="2">품목코드</th><th rowspan="2">제품명</th>
+                <th rowspan="2">US회전</th><th rowspan="2">UK회전</th><th rowspan="2" class="region-boundary">EU회전</th>
+                ${weekLabels.map(() => `
+                    <th colspan="3">재고 (한국)</th>
+                    <th colspan="3" style="color:#5b21b6;">✈️ 필요 PLT</th>
+                    <th colspan="3" style="color:#5b21b6; background:#f3effe;">✈️ 할당 PLT</th>
+                    <th colspan="3" style="color:#1d4ed8;">🚢 필요 PLT</th>
+                    <th colspan="3" class="region-boundary" style="color:#1d4ed8; background:#eff6ff;">🚢 할당 PLT</th>`).join('')}
+            </tr>
+            <tr>
+                ${weekLabels.map(() => `
+                    <th>입고예정</th><th>가용재고</th><th>출고가능PLT</th>
+                    ${regionThs('')}${regionThs('')}${regionThs('')}${regionThs('region-boundary')}`).join('')}
+            </tr>`;
+
+        const needCell = v => v === null ? '<td>-</td>' : `<td>${v > 0 ? v.toLocaleString() : ''}</td>`;
+        const allocCell = (v, m, last) => {
+            const bg = m === 'air' ? '#f3effe' : '#eff6ff';
+            return `<td${last ? ' class="region-boundary"' : ''} style="background:${bg}; font-weight:${v > 0 ? 700 : 400};">${v > 0 ? v.toLocaleString() : ''}</td>`;
+        };
+        document.getElementById('tbody3').innerHTML = items.map(it => `
+            <tr>
+                <td>${it.code}</td>
+                <td style="text-align:left;">${it.name}</td>
+                <td>${getDaysBadge(String(it.days.us), 'us', it.heavy)}</td>
+                <td>${getDaysBadge(String(it.days.uk), 'uk', it.heavy)}</td>
+                <td class="region-boundary">${getDaysBadge(String(it.days.eu), 'eu', it.heavy)}</td>
+                ${it.weeks.map(w => `
+                    <td>${w.incoming.toLocaleString()}</td>
+                    <td>${Math.round(w.avail).toLocaleString()}</td>
+                    <td>${w.availPlt !== null ? w.availPlt.toFixed(1) : '-'}</td>
+                    ${REGIONS.map(r => needCell(w.need[r].air)).join('')}
+                    ${REGIONS.map((r, i) => allocCell(w.alloc[r].air, 'air', false)).join('')}
+                    ${REGIONS.map(r => needCell(w.need[r].sea)).join('')}
+                    ${REGIONS.map((r, i) => allocCell(w.alloc[r].sea, 'sea', i === 2)).join('')}`).join('')}
+            </tr>`).join('');
+
+        document.getElementById('tfoot3').innerHTML = `
+            <tr style="font-weight:700; background:#f8fafc;">
+                <td colspan="5" style="text-align:left; padding-left:15px;" class="region-boundary">합계 (PLT)</td>
+                ${weekLabels.map((wl, wi) => `
+                    <td></td><td></td><td></td>
+                    ${REGIONS.map(r => `<td>${totals[wi].air[r].need.toLocaleString()}</td>`).join('')}
+                    ${REGIONS.map(r => `<td style="background:#f3effe; color:#5b21b6;">${totals[wi].air[r].alloc.toLocaleString()}</td>`).join('')}
+                    ${REGIONS.map(r => `<td>${totals[wi].sea[r].need.toLocaleString()}</td>`).join('')}
+                    ${REGIONS.map((r, i) => `<td${i === 2 ? ' class="region-boundary"' : ''} style="background:#eff6ff; color:#1d4ed8;">${totals[wi].sea[r].alloc.toLocaleString()}</td>`).join('')}`).join('')}
+            </tr>`;
+
+        const warnEl = document.getElementById('booking-pallet-warning');
+        let note = `💡 가용재고 = 국내(콜로세움) 가용재고 − B2B 사전할당 + 입고예정×70% (나머지 30%는 다음 주 이월, 원본 엑셀 로직 동일) · 필요 PLT는 각 권역 현지 재고 소진 기준, 이전 주 할당분 차감 · 할당 = 항공(급한 순) → 해상(급한 순) 순서로 출고가능 PLT 안에서 자동 배분`;
+        if (palletMeta.unmatched_count > 0) {
+            note += `<br>⚠️ 팔렛트 환산표 미매칭 ${palletMeta.unmatched_count}개 코드는 PLT를 계산할 수 없어 "-"로 표시됩니다.`;
+            warnEl.title = palletMeta.unmatched_codes.join(', ');
+        }
+        warnEl.innerHTML = note;
+    }
+
+    /* 해당 월의 주차 수 = 그 달에 월요일이 몇 번 있는지 (워터폴 주차는 월요일 시작) */
+    function mondaysInMonth(year, month) {
+        let count = 0;
+        const d = new Date(year, month, 1);
+        while (d.getMonth() === month) {
+            if (d.getDay() === 1) count++;
+            d.setDate(d.getDate() + 1);
+        }
+        return count;
+    }
+
+    /* 주차 시작일이 속한 월의 권역별 판매예정 수량. 포캐스팅 없는 월은 가장 가까운 월 값으로 대체 */
+    function getFcstMonthly(row, region, weekStart) {
+        const f = row && row.fcst ? row.fcst : {};
+        const keys = Object.keys(f).sort();
+        if (!keys.length) return null;
+        const key = `${weekStart.getFullYear()}-${String(weekStart.getMonth()+1).padStart(2,'0')}`;
+        let use;
+        if (f[key]) use = key;
+        else if (key < keys[0]) use = keys[0];
+        else if (key > keys[keys.length-1]) use = keys[keys.length-1];
+        else use = keys.find(k => k >= key) || keys[keys.length-1];
+        return { qty: (f[use][region] || 0), month: use };
+    }
+
+    function buildWaterfall(row, region, useFcst = false) {
+        if (!row) return [];
+        const unifiedName = row['통합 제품명']||'';
+        const schedules = (waterfallData[unifiedName] || []).filter(s => s.region === region && s.date); // ETA 미정(TBD) 이벤트는 주차 배치 불가 — renderWaterfall에서 별도 안내
+
+        const initialStock = row[`${region}_stock`];
+        const dailySales   = row[`${region}_sales`];
+
+        const today = new Date();
+        const week1Start = getMondayOf(today);
+
+        const weeks = [];
+        for (let i=0; i<27; i++) {
+            const start = addDays(week1Start, i*7);
+            const end   = addDays(start, 6);
+            const days  = (i === 0)
+                ? (7 - (Math.floor((today - start) / (1000*60*60*24))))
+                : 7;
+            weeks.push({ idx: i, start, end, days: Math.max(1, Math.min(7, days)), incoming: 0 });
+        }
+
+        const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+        schedules.forEach(s => {
+            const eta = new Date(s.date + 'T00:00:00');
+            let targetIdx;
+            if (eta < todayDateOnly) {
+                targetIdx = 0;
+            } else {
+                let foundIdx = -1;
+                for (let i=0; i<weeks.length; i++) {
+                    if (eta >= weeks[i].start && eta <= weeks[i].end) {
+                        foundIdx = i; break;
+                    }
+                }
+                targetIdx = foundIdx === -1 ? -1 : foundIdx + 1;
+                if (targetIdx >= weeks.length) targetIdx = -1;
+            }
+            if (targetIdx >= 0 && targetIdx < weeks.length) {
+                weeks[targetIdx].incoming += s.qty;
+            }
+        });
+
+        const todayMonthKey = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`;
+
+        let opening = initialStock;
+        return weeks.map(w => {
+            // 포캐스팅 일판매: 당월은 실판매를 그대로 사용 (월 진행 중이라 포캐스팅과 거의 동일하다고 봄),
+            // 그 외 월은 해당 월 판매예정 ÷ 그 달 주차 수 ÷ 7 (판매예정 없는 월은 가장 가까운 월 값)
+            const wKey = `${w.start.getFullYear()}-${String(w.start.getMonth()+1).padStart(2,'0')}`;
+            let fcstDaily = null;
+            if (wKey === todayMonthKey) {
+                fcstDaily = dailySales;
+            } else {
+                const fm = getFcstMonthly(row, region, w.start);
+                if (fm) fcstDaily = Math.round(fm.qty / mondaysInMonth(w.start.getFullYear(), w.start.getMonth()) / 7);
+            }
+            const daily = (useFcst && fcstDaily !== null) ? fcstDaily : dailySales;
+            const weekSales = w.days * daily;
+            const closing  = opening + w.incoming - weekSales;
+            const r = {
+                month: `${w.start.getMonth()+1}월`,
+                range: formatRange(w.start, w.end),
+                days: w.days,
+                opening, incoming: w.incoming,
+                dailySales, fcstDaily, weekSales, closing
+            };
+            opening = closing;
+            return r;
+        });
+    }
+
+    let useFcstSales = false;   // 워터폴 일판매 기준: false=실판매(28일 평균), true=포캐스팅(월별 판매예정)
+    let currentWfRegion = 'us';
+
+    function toggleFcstSales(checked) {
+        useFcstSales = checked;
+        renderWaterfall(currentWfRegion);
+    }
+
+    function renderWaterfall(region) {
+        currentWfRegion = region;
+        const cont = document.getElementById('modal-waterfall-content');
+        if (!currentModalRow) { cont.innerHTML = ''; return; }
+
+        const hasFcst = !!(currentModalRow.fcst && Object.keys(currentModalRow.fcst).length);
+        if (!hasFcst && useFcstSales) useFcstSales = false;
+        const toggleHtml = `
+            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
+                <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; color:${useFcstSales ? '#7c3aed' : '#475569'}; background:${useFcstSales ? '#f5f3ff' : '#f1f5f9'}; border:1px solid ${useFcstSales ? '#c4b5fd' : 'var(--border-color)'}; border-radius:999px; padding:5px 12px; cursor:${hasFcst ? 'pointer' : 'not-allowed'};"
+                       ${hasFcst ? '' : 'title="이 제품은 월별 판매예정(포캐스팅) 데이터가 없습니다."'}>
+                    <input type="checkbox" ${useFcstSales ? 'checked' : ''} ${hasFcst ? '' : 'disabled'} onchange="toggleFcstSales(this.checked)" style="accent-color:#7c3aed;">
+                    📊 포캐스팅 일판매 적용
+                </label>
+                ${useFcstSales
+                    ? `<span style="font-size:11px; color:#7c3aed;">잔여재고를 포캐스팅 일판매 기준으로 계산 중 · 당월은 실판매 그대로 사용 · 판매예정 없는 월은 가장 가까운 월 값</span>`
+                    : (hasFcst ? `<span style="font-size:11px; color:#94a3b8;">잔여재고는 실판매(최근 28일 평균) 기준 — 포캐스팅 일판매는 비교용으로만 표시 중</span>` : `<span style="font-size:11px; color:#94a3b8;">포캐스팅 데이터 없음 — 실판매 기준만 표시</span>`)}
+            </div>`;
+
+        const rows = buildWaterfall(currentModalRow, region, useFcstSales);
+
+        // ETA 미정(TBD) 이동중 재고 — 날짜가 없어 주차별 입고에 넣을 수 없으므로 별도 안내
+        const tbdEvents = (waterfallData[currentModalRow['통합 제품명']||''] || [])
+            .filter(s => s.region === region && !s.date);
+        const tbdHtml = tbdEvents.length ? `
+            <div style="background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:10px 14px; margin-bottom:14px; font-size:12px; color:#92400e;">
+                ⚠️ <strong>ETA 미정(TBD) 이동중 재고 ${tbdEvents.reduce((a,s)=>a+s.qty,0).toLocaleString()}개</strong>
+                — ${tbdEvents.map(s => `${s.mode==='air'?'✈️':'🚢'} ${s.label||'(차수 미상)'} ${s.qty.toLocaleString()}개`).join(' · ')}
+                · 입고 일정이 확정되지 않아 아래 워터폴 잔여재고에는 반영되지 않음
+            </div>` : '';
+
+        if (rows.every(r => r.weekSales <= 0)) {
+            cont.innerHTML = toggleHtml + tbdHtml + `<div style="padding:20px; text-align:center; color:#64748b;">${region.toUpperCase()} ${useFcstSales ? '실판매·포캐스팅 판매예정이 모두' : '일판매량이'} 0이므로 워터폴 계산이 의미가 없습니다.</div>`;
+            return;
+        }
+
+        const booking = calcBooking(rows, region);
+        const hasBooking = (booking.air > 0 || booking.sea > 0);
+        const bookingHtml = `
+            <div style="background:#f8fafc; border:1px solid var(--border-color); border-radius:8px; padding:14px 16px; margin-bottom:14px;">
+                <div style="font-size:12px; font-weight:700; color:#475569; margin-bottom:8px;">
+                    📦 권장 부킹 (이번 주 제외 · ${region.toUpperCase()} 기준${useFcstSales ? ' · <span style="color:#7c3aed;">포캐스팅 일판매</span>' : ''})
+                </div>
+                ${hasBooking ? `
+                <div style="display:flex; gap:20px; flex-wrap:wrap;">
+                    <div>
+                        <span style="font-size:11px; color:#5b21b6; font-weight:600;">✈️ 항공 (${booking.airLabel} 내 결품분)</span><br>
+                        <span style="font-size:20px; font-weight:700; color:#5b21b6;">${booking.air.toLocaleString()}</span>
+                        <span style="font-size:12px; color:#64748b;">EA</span>
+                    </div>
+                    <div style="border-left:1px solid var(--border-color); padding-left:20px;">
+                        <span style="font-size:11px; color:#1d4ed8; font-weight:600;">🚢 해상 (${booking.seaLabel} 내 결품분 − 항공)</span><br>
+                        <span style="font-size:20px; font-weight:700; color:#1d4ed8;">${booking.sea.toLocaleString()}</span>
+                        <span style="font-size:12px; color:#64748b;">EA</span>
+                    </div>
+                </div>` : `
+                <div style="font-size:13px; color:#16a34a; font-weight:600;">✅ 해당 기간 내 결품 없음 — 부킹 불필요</div>`}
+            </div>`;
+
+        let html = toggleHtml + tbdHtml + bookingHtml + `<table class="waterfall-table">
+            <thead><tr>
+                <th>월</th><th>주차</th><th>일수</th>
+                <th>기초재고</th><th>입고</th>
+                <th style="${!useFcstSales ? 'background:#eff6ff; color:#1d4ed8;' : ''}">일판매</th>
+                <th style="${useFcstSales ? 'background:#f5f3ff; color:#7c3aed;' : 'color:#7c3aed;'}">포캐스팅 일판매</th>
+                <th>주판매</th><th>잔여재고</th>
+            </tr></thead><tbody>`;
+        rows.forEach((r, i) => {
+            const cls = r.closing < 0 ? 'waterfall-row-negative' : (r.incoming > 0 ? 'waterfall-row-incoming' : '');
+            const rule = BOOKING_RULE[region];
+            const isAirMark = (i === Math.min(rule.airIdx, rows.length - 1));
+            const isSeaMark = (i === Math.min(rule.seaIdx, rows.length - 1));
+            const mark = isAirMark ? ' ✈️' : (isSeaMark ? ' 🚢' : '');
+            html += `<tr class="${cls}">
+                <td class="month-cell">${r.month}</td>
+                <td class="week-cell">${r.range}${mark}</td>
+                <td class="week-cell">${r.days}</td>
+                <td>${r.opening.toLocaleString()}</td>
+                <td>${r.incoming ? '+'+r.incoming.toLocaleString() : '-'}</td>
+                <td style="${!useFcstSales ? 'background:#eff6ff; font-weight:600;' : ''}">${r.dailySales.toLocaleString()}</td>
+                <td style="color:#7c3aed; ${useFcstSales ? 'background:#f5f3ff; font-weight:600;' : ''}">${r.fcstDaily === null ? '-' : r.fcstDaily.toLocaleString()}</td>
+                <td>${r.weekSales.toLocaleString()}</td>
+                <td><strong>${r.closing.toLocaleString()}</strong></td>
+            </tr>`;
+        });
+        html += `</tbody></table>`;
+        cont.innerHTML = html;
+    }
+
+    /* 일별 판매 추이 렌더 (최근 28일, US/UK/EU) */
+    function renderDailySales() {
+        if (!currentModalRow) return;
+        const unifiedName = currentModalRow['통합 제품명'] || '';
+        const entry = dailySalesData[unifiedName];
+        const cont = document.getElementById('modal-daily-content');
+
+        if (!entry) {
+            cont.innerHTML = `<div style="padding:30px; text-align:center; color:#64748b;">📭 최근 28일 판매 데이터가 없습니다.</div>`;
+            return;
+        }
+
+        const regions = [
+            { key:'us', label:'🇺🇸 US', color:'#1e3a8a' },
+            { key:'uk', label:'🇬🇧 UK', color:'#92400e' },
+            { key:'eu', label:'🇪🇺 EU', color:'#065f46' }
+        ];
+
+        // 상단 요약: 권역별 28일 평균 vs 최근 3일 평균
+        let summary = '<div style="display:flex; gap:20px; flex-wrap:wrap; margin-bottom:14px;">';
+        regions.forEach(r => {
+            const s = entry[r.key] || [];
+            const avg28 = s.length ? (s.reduce((a,b)=>a+b,0) / 28) : 0;
+            const recent3 = s.length ? (s.slice(-3).reduce((a,b)=>a+b,0) / 3) : 0;
+            const spiking = recent3 >= Math.max(10, 2 * avg28);
+            summary += `
+                <div style="background:#f8fafc; border:1px solid var(--border-color); border-radius:8px; padding:10px 14px;">
+                    <div style="font-size:11px; font-weight:700; color:${r.color};">${r.label}${spiking ? ' <span class="badge-spike">📈 급증</span>' : ''}</div>
+                    <div style="font-size:12px; color:#475569; margin-top:4px;">28일 평균 <strong>${avg28.toFixed(1)}</strong> · 최근 3일 <strong>${recent3.toFixed(1)}</strong></div>
+                </div>`;
+        });
+        summary += '</div>';
+
+        // 미니 막대 차트 (권역별 한 줄)
+        let charts = '';
+        regions.forEach(r => {
+            const s = entry[r.key] || [];
+            if (!s.some(v => v > 0)) return;
+            const max = Math.max(...s, 1);
+            const bars = s.map((v, i) => {
+                const h = Math.max(2, Math.round(v / max * 40));
+                const d = entry.dates[i].slice(5).replace('-', '/');
+                return `<div title="${d}: ${v.toLocaleString()}개" style="flex:1; display:flex; align-items:flex-end;">
+                    <div style="width:100%; height:${h}px; background:${r.color}; opacity:${v>0?0.85:0.15}; border-radius:2px 2px 0 0;"></div>
+                </div>`;
+            }).join('');
+            charts += `
+                <div style="margin-bottom:14px;">
+                    <div style="font-size:12px; font-weight:700; color:${r.color}; margin-bottom:4px;">${r.label}</div>
+                    <div style="display:flex; gap:2px; height:44px; align-items:flex-end; border-bottom:1px solid var(--border-color); padding-bottom:1px;">${bars}</div>
+                    <div style="display:flex; justify-content:space-between; font-size:10px; color:#94a3b8; margin-top:2px;">
+                        <span>${entry.dates[0].slice(5).replace('-','/')}</span><span>${entry.dates[27].slice(5).replace('-','/')}</span>
+                    </div>
+                </div>`;
+        });
+        if (!charts) charts = `<div style="padding:14px; text-align:center; color:#64748b; font-size:13px;">전 권역 판매 0</div>`;
+
+        cont.innerHTML = summary + charts +
+            `<div style="font-size:11px; color:#94a3b8; margin-top:6px;">막대에 마우스를 올리면 일자별 수량이 표시됩니다. 일판매(대시보드 컬럼)는 이 28일 평균 기준입니다.</div>`;
+    }
+
+    /* 국내 입고 예정 렌더 */
+    function renderInbound() {
+        if (!currentModalRow) return;
+        const unifiedName = currentModalRow['통합 제품명'] || '';
+        const entry = inboundData[unifiedName];
+        const cont = document.getElementById('modal-inbound-content');
+
+        if (!entry) {
+            cont.innerHTML = `<div style="padding:30px; text-align:center; color:#64748b;">📭 해당 제품의 국내 입고 예정 정보가 없습니다.</div>`;
+            return;
+        }
+
+        const totalHtml = `
+            <div style="background:#eff6ff; border:1px solid #93c5fd; border-radius:8px; padding:14px 18px; margin-bottom:12px;">
+                <div style="font-size:12px; color:#1e3a8a; font-weight:600; margin-bottom:4px;">📦 미입 총계 (아직 들어오지 않은 누적 예정 수량)</div>
+                <div style="font-size:24px; font-weight:700; color:#1e3a8a;">${entry.total.toLocaleString()} <span style="font-size:13px; font-weight:400; color:#64748b;">EA</span></div>
+            </div>`;
+
+        if (!entry.items || entry.items.length === 0) {
+            cont.innerHTML = totalHtml + `<div style="padding:14px; text-align:center; color:#64748b; font-size:13px;">주차별 입고 일정이 없습니다 (미입 총계만 있음)</div>`;
+            return;
+        }
+
+        // 월 정렬: 6~12월은 그대로, 1~5월은 다음 해로 처리 (+12)
+        const monthOrder = (m) => {
+            const n = parseInt((m||'').replace(/[^0-9]/g,''));
+            if (isNaN(n)) return 99;
+            return (n >= 6) ? n : n + 12;
+        };
+// 주차 텍스트에서 시작 일자(첫 숫자)를 추출. "1주차 1~5..." 같은 경우엔 "1~5"의 1을 잡도록.
+const weekStartDay = (w) => {
+    // "1주차 1~5\n영업일 3일" → 마지막 "숫자~숫자" 패턴의 앞 숫자 사용
+    const matches = [...(w||'').matchAll(/(\d+)\s*~\s*\d+/g)];
+    if (matches.length === 0) return 99;
+    // 여러 매치 중 마지막 것(예: "1주차 1~5"에서 "1~5")의 시작일
+    return parseInt(matches[matches.length - 1][1]);
+};
+
+const items = [...entry.items].sort((a,b) => {
+    const ma = monthOrder(a.month), mb = monthOrder(b.month);
+    if (ma !== mb) return ma - mb;
+    return weekStartDay(a.week) - weekStartDay(b.week);  // 숫자 기준 정렬
+});
+        let rows = '';
+        items.forEach(it => {
+            const weekClean = it.week.replace(/\s+/g, ' ').replace(/(\d+~\d+)\s*(영업일\s*\d+일)/, '$1 ($2)');
+            rows += `<tr>
+                <td class="month-cell">${it.month}</td>
+                <td class="week-cell">${weekClean}</td>
+                <td style="text-align:right;"><strong>+${it.qty.toLocaleString()}</strong></td>
+            </tr>`;
+        });
+
+        cont.innerHTML = totalHtml + `
+            <table class="waterfall-table">
+                <thead><tr><th>월</th><th>주차</th><th style="text-align:right;">입고 예정 수량</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>`;
+    }
+
+    function initSwingMonths() {
+        // 데이터에 존재하는 판매예정 월 중, 직전월도 있어야 변동 계산이 가능한 월만 후보로
+        const all = new Set();
+        groupedData.forEach(r => { if (r.fcst) Object.keys(r.fcst).forEach(k => all.add(k)); });
+        const months = [...all].sort().filter(m => all.has(prevMonthKey(m)));
+        const sel = document.getElementById('fcst-month-select');
+        if (!months.length) { document.getElementById('kpi-card-swing').style.display = 'none'; return; }
+        // 기본값: 내년 1월이 있으면 그것, 없으면 마지막 달
+        const jan = months.find(m => m.endsWith('-01'));
+        swingMonth = jan || months[months.length - 1];
+        months.forEach(m => {
+            const opt = document.createElement('option');
+            opt.value = m; opt.textContent = m.replace('-', '년 ') + '월';
+            if (m === swingMonth) opt.selected = true;
+            sel.appendChild(opt);
+        });
+    }
+
+    function renderSwingKPI() {
+        const list = groupedData.filter(r => getSwing(r, swingMonth));
+        const up = list.filter(r => getSwing(r, swingMonth).kind === 'up').length;
+        const down = list.filter(r => getSwing(r, swingMonth).kind === 'down').length;
+        const neu = list.filter(r => getSwing(r, swingMonth).kind === 'new').length;
+        document.getElementById('kpi-fcst-swing').innerHTML = `${list.length} <span>SKU</span>`;
+        document.getElementById('kpi-swing-sub').textContent =
+            `직전월 대비 ±30% (📈${up} 📉${down}${neu ? ` 신규${neu}` : ''})`;
+    }
+
+    function onFcstMonthChange(v) {
+        swingMonth = v;
+        renderSwingKPI();
+        renderTable('tbody1', rawData, false);
+        renderTable('tbody2', groupedData, true);
+        applyFilters('1'); applyFilters('2');
+    }
+
+    function toggleSwingFilter() {
+        swingFilterOn = !swingFilterOn;
+        const card = document.getElementById('kpi-card-swing');
+        card.style.outline = swingFilterOn ? '3px solid #f59e0b' : '';
+        card.style.outlineOffset = swingFilterOn ? '-3px' : '';
+        applyFilters('1'); applyFilters('2');
+    }
+
+    function initCompareDropdown() {
+        const sel = document.getElementById('compare-select');
+        const dates = (snapshotHistory && snapshotHistory.dates) ? snapshotHistory.dates.slice() : [];
+        if (dates.length < 2) { sel.parentElement.parentElement.style.display = 'none'; return; }
+        const current = dates[dates.length - 1];  // 최신 = 현재 빌드
+        dates.filter(d => d !== current).reverse().forEach(d => {
+            const daysAgo = Math.round((new Date(current) - new Date(d)) / 86400000);
+            const opt = document.createElement('option');
+            opt.value = d;
+            opt.style.color = '#1e293b';
+            opt.textContent = `${d} (${daysAgo}일 전)`;
+            sel.appendChild(opt);
+        });
+    }
+
+    function onCompareChange(v) {
+        compareDate = v || null;
+        document.getElementById('compare-hint').textContent =
+            compareDate ? `▲▼ = ${compareDate} 대비 변화 · ⚠︎ 위험전이 = 그때는 안전, 지금 항공긴급` : '';
+        renderTable('tbody1', rawData, false);
+        renderTable('tbody2', groupedData, true);
+        applyFilters('1');   // 재렌더로 풀린 검색/필터 상태 복원
+        applyFilters('2');
+    }
+
+    window.onload = function () {
+        renderKPI();
+        initSwingMonths();      // 배지 렌더 전에 대상 월이 정해져야 함
+        renderSwingKPI();
+        initCompareDropdown();
+        renderTable('tbody1', rawData, false);
+        renderTable('tbody2', groupedData, true);
+        renderValueFooter('tfoot1', rawData);
+        renderValueFooter('tfoot2', groupedData);
+        renderBookingTable();
+    };
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') closeWaterfallModal();
+    });
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+# ===== 회사 저장소: 올리면 안 되는 것 =====
+
+# 로그인 계정/비밀번호가 든 RPA 스크립트 (개인 PC에서만 실행)
+downs.py
+wms.py
+
+# 원본 사업 데이터(raw) — 마스터/판매/재고 엑셀. 절대 커밋 금지
+*.xlsx
+*.xls
+~$*
+
+# 산출물·중간 데이터
+snapshots/
+dashboard_data.json
+__pycache__/
+*.log
+
+# 과거 백업·타 프로젝트·개인 인계 문서
+기존파일/
+ECC/
+.git_personal_backup/
+*.docx
+무결성해시_SHA256.txt
+
+# 에디터/환경
+.claude/
+.vscode/
