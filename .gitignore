@@ -25,3 +25,9 @@ ECC/
 # 에디터/환경
 .claude/
 .vscode/
+
+# 슬랙 알림용 로컬 파일 (PC마다 따로)
+국내재고/
+slack_paused.txt
+slack_message.txt
+# 단, slack_last_sent.txt 는 두 PC가 "오늘 이미 발송함"을 공유하도록 git으로 추적함 (같은 날 중복발송 방지)
