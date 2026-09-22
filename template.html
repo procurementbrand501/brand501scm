@@ -128,6 +128,8 @@
         .filter-btn.on-us { background: #1e3a8a; color: #fff; border-color: #1e3a8a; }
         .filter-btn.on-uk { background: #92400e; color: #fff; border-color: #92400e; }
         .filter-btn.on-eu { background: #065f46; color: #fff; border-color: #065f46; }
+        .export-btn { padding: 6px 16px; border: 1.5px solid #059669; border-radius: 20px; font-size: 12.5px; font-weight: 700; cursor: pointer; background: #059669; color: #fff; transition: all .15s; user-select: none; white-space: nowrap; }
+        .export-btn:hover { background: #047857; border-color: #047857; }
 
         .plc-filter-group { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: #475569; background: #f8fafc; border: 1px solid var(--border-color); border-radius: 20px; padding: 5px 14px; }
         .plc-filter-label { font-weight: 600; color: #64748b; }
@@ -271,6 +273,7 @@
             <button class="filter-btn" id="f1-uk" onclick="toggleFilter('1','uk')">✈️ 영국 항공 긴급</button>
             <button class="filter-btn" id="f1-eu" onclick="toggleFilter('1','eu')">✈️ 유럽 항공 긴급</button>
         </div>
+        <button class="export-btn" onclick="exportTab('1')">📥 엑셀 다운로드</button>
         <div class="plc-filter-group">
             <span class="plc-filter-label">PLC 표시:</span>
             <label><input type="checkbox" checked onchange="togglePlcFilter('1','운영',this)"> 🟢 운영</label>
@@ -327,6 +330,7 @@
             <button class="filter-btn" id="f2-uk" onclick="toggleFilter('2','uk')">✈️ 영국 항공 긴급</button>
             <button class="filter-btn" id="f2-eu" onclick="toggleFilter('2','eu')">✈️ 유럽 항공 긴급</button>
         </div>
+        <button class="export-btn" onclick="exportTab('2')">📥 엑셀 다운로드</button>
         <div class="plc-filter-group">
             <span class="plc-filter-label">PLC 표시:</span>
             <label><input type="checkbox" checked onchange="togglePlcFilter('2','운영',this)"> 🟢 운영</label>
@@ -382,6 +386,7 @@
         <div class="search-box">
             <input type="text" id="searchInput3" onkeyup="renderBookingTable()" placeholder="품목코드, 제품명 검색...">
         </div>
+        <button class="export-btn" onclick="exportTab('3')">📥 엑셀 다운로드</button>
     </div>
     <div style="padding:8px 4px; font-size:12px; color:#64748b;" id="booking-pallet-warning"></div>
     <div class="table-container">
@@ -1647,6 +1652,106 @@ const items = [...entry.items].sort((a,b) => {
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') closeWaterfallModal();
     });
+
+    /* ===== 엑셀 다운로드 (현재 화면 필터/검색 그대로) ===== */
+    function _exportAsof() {
+        const el = document.getElementById('last-updated');
+        const m = el && el.textContent.match(/(\d{4}-\d{2}-\d{2})/);
+        return m ? m[1] : new Date().toISOString().slice(0, 10);
+    }
+    function _ensureXLSX(cb) {
+        if (typeof XLSX !== 'undefined') { cb(); return; }
+        const load = (src, next) => {
+            const s = document.createElement('script');
+            s.src = src; s.onload = () => cb(); s.onerror = next;
+            document.head.appendChild(s);
+        };
+        // 로컬 파일 우선(오프라인 대응), 없으면 CDN
+        load('xlsx.full.min.js', () =>
+            load('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
+                () => alert('엑셀 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인하거나 xlsx.full.min.js를 대시보드와 같은 폴더에 두세요.')));
+    }
+    function _visibleRows(tabIdx) {
+        const data = tabIdx === '1' ? rawData : groupedData;
+        const tbody = document.getElementById('tbody' + tabIdx);
+        const out = [];
+        Array.from(tbody.getElementsByTagName('tr')).forEach(tr => {
+            if (tr.style.display === 'none') return;
+            const idx = parseInt(tr.getAttribute('data-row-idx'));
+            if (!isNaN(idx) && data[idx]) out.push(data[idx]);
+        });
+        return out;
+    }
+    const _EXP_REGIONS = [['us', '미국'], ['uk', '영국'], ['eu', '유럽']];
+    const _EXP_SUB = [['창고재고', 'stock'], ['항공이동', 'air'], ['해상이동', 'sea'], ['총 재고', 'total'],
+                      ['일판매', 'sales'], ['안전재고', 'safety'], ['안전대비%', 'pct'], ['회전일', 'days']];
+    function _expCell(row, rg, key) {
+        if (key === 'pct') { const t = row[rg + '_total'] || 0, s = row[rg + '_safety'] || 0; return s > 0 ? Math.round(t / s * 100) : '-'; }
+        if (key === 'days') { const v = row[rg + '_days']; const n = parseInt(v); return isNaN(n) ? v : n; }
+        return row[rg + '_' + key] || 0;
+    }
+    function _buildAOA(rows, regions) {
+        const info = [['품목코드', 'code'], ['제품명', 'name'], ['상품라인', '상품라인'], ['통합 제품명', '통합 제품명'], ['PLC', 'plc_status']];
+        const sub = info.map(x => x[0]).concat(regions.flatMap(() => _EXP_SUB.map(x => x[0])));
+        const group = ['품목 정보', '', '', '', ''].concat(regions.flatMap(([, l]) => [l].concat(Array(_EXP_SUB.length - 1).fill(''))));
+        const aoa = [group, sub];
+        rows.forEach(row => {
+            const line = info.map(([, k]) => (row[k] !== undefined && row[k] !== null) ? row[k] : '');
+            regions.forEach(([rg]) => _EXP_SUB.forEach(([, k]) => line.push(_expCell(row, rg, k))));
+            aoa.push(line);
+        });
+        return aoa;
+    }
+    function _styleSheet(ws, nrows, nregions) {
+        const S = _EXP_SUB.length;           // 권역당 열 수(8)
+        const NC = 5 + S * nregions;
+        const merges = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }];
+        for (let i = 0; i < nregions; i++) {
+            const start = 5 + i * S;
+            merges.push({ s: { r: 0, c: start }, e: { r: 0, c: start + S - 1 } });
+        }
+        ws['!merges'] = merges;
+        let cols = [{ wch: 14 }, { wch: 34 }, { wch: 12 }, { wch: 20 }, { wch: 8 }];
+        for (let i = 0; i < nregions; i++) cols = cols.concat([{ wch: 11 }, { wch: 11 }, { wch: 11 }, { wch: 11 }, { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 9 }]);
+        ws['!cols'] = cols;
+        // 수량 칸 천단위 서식
+        for (let r = 2; r < 2 + nrows; r++) {
+            for (let c = 5; c < NC; c++) {
+                const cell = ws[XLSX.utils.encode_cell({ r, c })];
+                if (cell && typeof cell.v === 'number') cell.z = '#,##0';
+            }
+        }
+        // 자동필터(서브헤더 행 기준)
+        ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 1, c: 0 }, e: { r: 1 + nrows, c: NC - 1 } }) };
+    }
+    function exportTab(tabIdx) {
+        _ensureXLSX(() => {
+            const asof = _exportAsof();
+            if (tabIdx === '3') {
+                const ws = XLSX.utils.table_to_sheet(document.getElementById('scmTable3'), { display: true });
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, '부킹관리');
+                const searched = (document.getElementById('searchInput3').value || '').trim() !== '';
+                XLSX.writeFile(wb, `부킹관리_${searched ? '검색결과' : '전체'}_${asof}.xlsx`);
+                return;
+            }
+            applyFilters(tabIdx);   // 내보내기 직전 현재 필터/검색을 DOM에 강제 재적용 (재렌더로 인한 desync 방지)
+            const rows = _visibleRows(tabIdx);
+            if (!rows.length) { alert('내보낼 품목이 없습니다. 필터/검색 조건을 확인하세요.'); return; }
+            const af = activeFilters[tabIdx];
+            // 선택한 권역만 열로 표시(여러 개면 다 표시). 아무것도 선택 안 하면 전체 3권역.
+            const selReg = _EXP_REGIONS.filter(([rg]) => af[rg]);
+            const regions = selReg.length ? selReg : _EXP_REGIONS;
+            const ws = XLSX.utils.aoa_to_sheet(_buildAOA(rows, regions));
+            _styleSheet(ws, rows.length, regions.length);
+            const parts = selReg.map(([, l]) => l);
+            const suffix = parts.length ? parts.join('') + '항공긴급' : '전체';
+            const base = tabIdx === '1' ? '개별코드' : '통합제품명';
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, suffix.slice(0, 25));
+            XLSX.writeFile(wb, `${base}_${suffix}_${asof}.xlsx`);
+        });
+    }
 </script>
 </body>
 </html>
