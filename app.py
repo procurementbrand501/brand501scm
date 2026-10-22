@@ -781,6 +781,50 @@ def parse_product_cost(file_path, sheet_name='입고 스케줄_상세'):
     return cost_map
 
 
+def parse_manufacturer(file_path, sheet_name='입고 스케줄_상세'):
+    """입고 스케줄_상세 시트에서 품목코드별 제조사(A열 '제조사') 추출 → Slack 부족알림 제조사 그룹핑에 사용."""
+    if not os.path.exists(file_path):
+        return {}
+    try:
+        df_raw = pd.read_excel(file_path, sheet_name=sheet_name, header=None)
+    except Exception:
+        return {}
+    header_row = None
+    for r in range(min(6, len(df_raw))):
+        if any('품목코드' in str(v) for v in df_raw.iloc[r].tolist()):
+            header_row = r
+            break
+    if header_row is None:
+        return {}
+    header = df_raw.iloc[header_row].tolist()
+    code_col = next((i for i, h in enumerate(header) if str(h).strip() == '품목코드'), None)
+    mfr_col = next((i for i, h in enumerate(header) if str(h).strip() == '제조사'), None)
+    if code_col is None or mfr_col is None:
+        return {}
+    mfr_map = {}
+    for r in range(header_row + 1, len(df_raw)):
+        row = df_raw.iloc[r].tolist()
+        if code_col >= len(row):
+            continue
+        code = row[code_col]
+        if pd.isna(code):
+            continue
+        code = str(code).strip().upper()
+        mfr = str(row[mfr_col]).strip() if mfr_col < len(row) and pd.notna(row[mfr_col]) else ''
+        if code and mfr and code not in mfr_map:
+            mfr_map[code] = mfr
+    return mfr_map
+
+
+def lookup_manufacturer(code, mfr_map):
+    """정확일치 우선, 없으면 접미사(-N, _V0N) 제거한 base 코드로 폴백."""
+    c = str(code).strip().upper()
+    if c in mfr_map:
+        return mfr_map[c]
+    base = re.sub(r'(_V0\d+|-\d+)$', '', c)
+    return mfr_map.get(base, '')
+
+
 def parse_product_status(file_path, sheet_name='입고 스케줄_상세'):
     """입고 스케줄_상세 시트에서 품목코드별 PLC 상태(운영/단종) 추출.
     제품명 셀에 취소선(strikethrough) 서식이 적용된 행은 단종으로 간주 (파일 작성자가 수기로 표시하는 규칙).
@@ -980,6 +1024,14 @@ def lookup_product_name(code, name_dict):
     return name_dict.get(code_str, "")
 
 
+# 신제품(버전) 코드 판정: 코드 끝이 _V01, _V02 ... 형태 (예: GLMX238_V01)
+NEW_PRODUCT_RE = re.compile(r'_V0\d+$', re.IGNORECASE)
+
+def is_new_product_code(code):
+    """마스터에 신제품으로 등록되는 _V0N 접미사 코드인지"""
+    return bool(NEW_PRODUCT_RE.search(str(code).strip()))
+
+
 def apply_sales_plc_override(df):
     """PLC 자동판정(취소선 기반) 보정: 지역 합계 판매량이 100개 이상이면 소스 파일 표시와 무관하게 '운영'으로 간주.
     실제로 잘 팔리고 있는데도 원본 파일의 취소선 표시(오기입 등) 때문에 '단종'으로 잘못 뜨는 사례를 보정하기 위함.
@@ -1153,7 +1205,8 @@ def build_json_rows(df):
             "us_last7": [int(x) for x in (row.get('us_last7') if isinstance(row.get('us_last7'), list) else [0]*7)],
             "uk_last7": [int(x) for x in (row.get('uk_last7') if isinstance(row.get('uk_last7'), list) else [0]*7)],
             "eu_last7": [int(x) for x in (row.get('eu_last7') if isinstance(row.get('eu_last7'), list) else [0]*7)],
-            "fcst": row.get('fcst') if isinstance(row.get('fcst'), dict) else {}
+            "fcst": row.get('fcst') if isinstance(row.get('fcst'), dict) else {},
+            "mfr": str(row.get('mfr', '') or '')
         })
     return json_data
 
@@ -1213,7 +1266,8 @@ def run_dashboard_generator():
     print("🔄 [5.6/7] 원가/PLC 상태 파싱 중...")
     product_cost = parse_product_cost(excel_inbound)
     product_status = parse_product_status(excel_inbound)
-    print(f"   > 원가 매칭 가능 SKU: {len(product_cost)}개, PLC 상태 정보: {len(product_status)}개")
+    product_mfr = parse_manufacturer(excel_inbound)
+    print(f"   > 원가 매칭 가능 SKU: {len(product_cost)}개, PLC 상태 정보: {len(product_status)}개, 제조사 매핑: {len(product_mfr)}개")
 
     print("🔄 [5.65/7] 월별 판매예정(포캐스팅) 파싱 중...")
     fcst_map, fcst_months = parse_forecast_sales(excel_inbound)
@@ -1263,6 +1317,20 @@ def run_dashboard_generator():
     merged = pd.merge(merged, eu_sales_df, on='품목코드', how='outer')
     merged = pd.merge(merged, transit_df,  on='품목코드', how='outer')
 
+    # 재고 0 신제품(_V0N) 주입: 마스터엔 등록됐지만 재고·판매·이동중이 전혀 없어
+    # merged에 아직 없는 신제품 코드를 빈 행으로 추가 → 재고가 들어오기 전에도 대시보드에 노출
+    # (2026-08-27 사용자 결정: 신제품만 항상 표시, 오래된 죽은 코드는 계속 숨김)
+    if master_df is not None and '품목코드' in master_df.columns:
+        existing_codes = set(merged['품목코드'].dropna().astype(str).str.strip())
+        new_prod_codes = sorted({
+            c for c in (str(x).strip() for x in master_df['품목코드'].dropna())
+            if c and ',' not in c and is_new_product_code(c) and c not in existing_codes
+        })
+        if new_prod_codes:
+            merged = pd.concat([merged, pd.DataFrame({'품목코드': new_prod_codes})],
+                               ignore_index=True)
+            print(f"   > 🆕 재고 0 신제품(_V0N) {len(new_prod_codes)}개 주입 (대시보드 노출용)")
+
     fill_numeric = ['us_stock', 'uk_stock', 'eu_stock',
                     'us_sales', 'uk_sales', 'eu_sales',
                     'us_air', 'us_sea', 'uk_air', 'uk_sea', 'eu_air', 'eu_sea']
@@ -1296,6 +1364,7 @@ def run_dashboard_generator():
     # 원가/PLC 상태 부착 + 재고 금액 계산 (그룹핑 전, 개별 코드 단위로 계산해야 통합 제품명 합산 시 정확함)
     merged['unit_cost'] = merged['품목코드'].str.upper().map(product_cost).fillna(0).astype(int)
     merged['plc_status'] = merged['품목코드'].str.upper().map(product_status).fillna('정보없음')
+    merged['mfr'] = merged['품목코드'].apply(lambda c: lookup_manufacturer(c, product_mfr))
     merged['pallet_units'] = merged['품목코드'].str.upper().map(pallet_map).fillna(0).astype(int)
     merged['b2b_qty'] = merged['품목코드'].str.upper().map(b2b_map).fillna(0).astype(int)
     merged['kr_stock'] = merged['품목코드'].str.upper().map(kr_stock_map).fillna(0).astype(int)
@@ -1340,7 +1409,9 @@ def run_dashboard_generator():
     # 결품 상태로 팔리는 SKU가 대시보드에서 아예 사라져 항공 긴급을 놓치는 문제 방지 (2026-07-15)
     tab1_sales = tab1['us_sales'] + tab1['uk_sales'] + tab1['eu_sales']
     stockout_selling = ((tab1['grand_total'] <= 0) & (tab1_sales > 0)).sum()
-    tab1 = tab1[(tab1['grand_total'] > 0) | (tab1_sales > 0) | (tab1['kr_stock'] > 0)]
+    # 신제품(_V0N)은 재고·판매가 0이어도 항상 표시 (2026-08-27)
+    tab1_is_new = tab1['품목코드'].apply(is_new_product_code)
+    tab1 = tab1[(tab1['grand_total'] > 0) | (tab1_sales > 0) | (tab1['kr_stock'] > 0) | tab1_is_new]
     if stockout_selling:
         print(f"   > 🚨 결품 판매중 SKU {stockout_selling}개 — 재고 0이지만 판매 발생, 대시보드에 표시됨")
 
@@ -1447,12 +1518,36 @@ def run_dashboard_generator():
     tab2['품목코드'] = tab2['통합 제품명']
     tab2 = tab2.rename(columns={'대표제품명': '제품명', '대표상품라인': '상품라인'})
 
+    # 통합 제품명(=대표코드)의 표시 이름은 '그 대표코드 자신의 제품명'을 쓴다.
+    # 마스터의 '통합 제품명' 칸에는 항상 대표 품목코드가 들어있고(189개 전부 품목코드와 일치),
+    # 그룹 표시 이름은 그 코드의 제품명이어야 한다는 규칙. groupby('제품명','first')는 merged(재고)
+    # 순서상 먼저 온 코드의 제품명을 잡아, 대표코드와 다른 형제 SKU 이름이 뜨는 문제가 있었음
+    # (예: GLMX179 그룹에 GLMX091 '…시멘리트…' 이름이 잘못 표시됨).
+    if master_df is not None and '제품명' in master_df.columns and '품목코드' in master_df.columns:
+        code2name = {}
+        for _, mr in master_df.iterrows():
+            code = str(mr.get('품목코드', '')).strip()
+            name = str(mr.get('제품명', '')).strip()
+            if code and name and name.lower() != 'nan' and code not in code2name:
+                code2name[code] = name
+        tab2['제품명'] = [
+            code2name.get(str(g).strip()) or nm
+            for g, nm in zip(tab2['통합 제품명'], tab2['제품명'])
+        ]
+
     tab2['grand_total'] = tab2['us_stock'] + tab2['uk_stock'] + tab2['eu_stock'] + \
                           tab2['us_air'] + tab2['us_sea'] + \
                           tab2['uk_air'] + tab2['uk_sea'] + \
                           tab2['eu_air'] + tab2['eu_sea']
     tab2_sales = tab2['us_sales'] + tab2['uk_sales'] + tab2['eu_sales']
-    tab2 = tab2[(tab2['grand_total'] > 0) | (tab2_sales > 0) | (tab2['kr_stock'] > 0)]
+    # 신제품(_V0N) 멤버 코드를 가진 통합 제품명 그룹은 재고·판매 0이어도 항상 표시 (2026-08-27)
+    new_group_names = set(
+        merged.loc[merged['품목코드'].apply(is_new_product_code), '통합 제품명']
+              .astype(str).str.strip()
+    )
+    tab2_is_new = tab2['통합 제품명'].astype(str).str.strip().isin(new_group_names) \
+                  | tab2['품목코드'].apply(is_new_product_code)
+    tab2 = tab2[(tab2['grand_total'] > 0) | (tab2_sales > 0) | (tab2['kr_stock'] > 0) | tab2_is_new]
 
     apply_sales_plc_override(tab2)
 
@@ -1608,6 +1703,374 @@ def run_dashboard_generator():
 
     print(f"🎉 성공: '{output_path}' 생성 완료!")
 
+    # 재고 부족 Slack 메시지 준비 (여기서는 저장만 — 발송은 update.bat 최종 업로드 후 1회)
+    try:
+        slack_domestic = parse_slack_domestic_stock(master_df)
+        if slack_domestic:
+            print(f"   > 국내창고(슬랙 알림용) 재고: {len(slack_domestic)}개 코드, 합계 {sum(slack_domestic.values()):,}")
+        else:
+            print("   > ℹ️ 국내재고/ 폴더에 파일 없음 — 국내재고 차감 없이 계산")
+        save_slack_message(json_tab1, slack_domestic)
+    except Exception as e:
+        print(f"   > ⚠️ Slack 메시지 준비 실패(빌드에는 영향 없음): {e}")
+
+
+# ─────────────────────────────────────────────────────────────
+# 재고 부족 Slack 알림
+# ─────────────────────────────────────────────────────────────
+# 기준(대시보드와 동일): 권역별로 ① 항공긴급(회전일 ≤ US 45 / UK·EU 60, 중량물 +30)
+#                         또는 ② 안전재고 미달(총재고 < 안전재고) 이면 "부족"으로 집계.
+# 집계 단위 = 개별 품목코드(tab1). Webhook URL은 환경변수 SCM_SLACK_WEBHOOK 에서 읽음.
+SLACK_REGION_META = [
+    ('us', '미국', 'US', 45),
+    ('uk', '영국', 'UK', 60),
+    ('eu', '유럽', 'EU', 60),
+]
+SLACK_MAX_ROWS = 60  # 표에 나열할 최대 행 수 (권역 합산)
+
+def _slack_days_val(v):
+    if v is None or v == '여유':
+        return float('inf')
+    try:
+        return int(v)
+    except (ValueError, TypeError):
+        return float('inf')
+
+def _is_sunscreen(name):
+    n = str(name).lower()
+    return ('선크림' in n) or ('썬크림' in n) or ('sun' in n)
+
+# 국내창고 재고원장에서 슬랙 알림에 포함할 창고코드 (용인메인/서브·안성죽산 등)
+DOMESTIC_WH_CODES = {'WH507', 'WH508', 'WH611', 'WH612'}
+
+def _detect_kctc_layout(df):
+    """KCTC 엑셀의 헤더를 인식해 (헤더행, 코드열, 합산할 수량열 리스트, 양식명) 반환. 아니면 None.
+    - 구양식(~2026-10): 'SKU' + '재고현황'(그 아래 '합계' = 정상+보류계열 전체) → 재고현황 열 1개.
+    - 신양식(2026-10-22~, 파일명 '엑셀 저장_*'): 'SKU 번호' + '정상재고'(합계/가용/신규주문) +
+      '보류재고'(보류/불량/수선/예약/파손/반품보류/유통기한만료/파손(셀러귀책)) 2단 헤더.
+      정상재고 그룹의 '가용' 열만 사용 (신규주문·보류재고 제외 — 구양식 '합계'와 정의가 다름에 주의)."""
+    for r in range(min(8, len(df) - 1)):
+        vals = [str(v).strip() if pd.notna(v) else '' for v in df.iloc[r].tolist()]
+        if 'SKU 번호' in vals and '정상재고' in vals and '보류재고' in vals:
+            sub = [str(v).strip() if pd.notna(v) else '' for v in df.iloc[r + 1].tolist()]
+            code_col = vals.index('SKU 번호')
+            normal_start = vals.index('정상재고')
+            hold_start = vals.index('보류재고')
+            # 정상재고 그룹 안의 '가용' 서브헤더 열만 사용 (2026-10-22 사용자 지시: 신규주문·보류재고 제외)
+            normal_avail = next((i for i in range(normal_start, hold_start) if sub[i] == '가용'), None)
+            if normal_avail is None:
+                return None
+            return r, code_col, [normal_avail], '신양식'
+        if 'SKU' in vals and any('재고현황' in v for v in vals):
+            return r, vals.index('SKU'), [next(i for i, v in enumerate(vals) if '재고현황' in v)], '구양식'
+    return None
+
+
+def find_kctc_files(folder):
+    """국내재고/ 폴더에서 KCTC 재고 파일 후보 [(path, df, layout)]를 반환.
+    파일명에 'KCTC'가 있거나(구양식), 헤더 구조가 KCTC 양식이면(신양식 '엑셀 저장_*'처럼 이름에 KCTC 없음) 인정.
+    재고원장 파일은 제외(구조가 다르고 크기가 커서 읽지 않음)."""
+    found = []
+    for f in (glob.glob(os.path.join(folder, '*.xls')) + glob.glob(os.path.join(folder, '*.xlsx'))):
+        name = os.path.basename(f)
+        if name.startswith('~$') or '재고원장' in name:
+            continue
+        try:
+            df = pd.read_excel(f, header=None)
+        except Exception as e:
+            if 'KCTC' in name.upper():
+                print(f"   > ⚠️ KCTC 파일 읽기 실패({name}): {e}")
+            continue
+        layout = _detect_kctc_layout(df)
+        if layout is not None:
+            found.append((f, df, layout))
+        elif 'KCTC' in name.upper():
+            # 예전엔 고정 열(E/L)로 폴백했으나, 양식이 바뀌면 조용히 엉뚱한 숫자를 읽으므로 건너뛰고 경고만 남김
+            print(f"   > ⚠️ KCTC 헤더 인식 실패 — 이 파일은 건너뜀(양식 확인 필요): {name}")
+    return found
+
+
+def parse_kctc_stock(folder, master_codes):
+    """국내재고/ 폴더의 KCTC 파일(3PL 물류센터 재고)에서 코드별 재고 합산.
+    - 구양식/신양식 모두 지원 (_detect_kctc_layout). 수량 = 구양식 합계(정상+보류계열) / 신양식 정상재고 가용.
+    - 구양식은 같은 SKU가 제조일/유통기한별로 여러 행이라 코드별로 합산한다. 신양식 맨 아래 '합계' 행은 코드가 비어 자동 스킵.
+    - 재고원장(WH507/508/611/612)과 다른 창고라 합산해도 중복 아님.
+    - KCTC 파일이 여러 벌이면 mtime 최신 1개만 사용(재다운로드 복사본·구/신양식 공존 시 중복합산 방지)."""
+    candidates = find_kctc_files(folder)
+    if not candidates:
+        return {}
+    f, df, (hr, code_col, qty_cols, kind) = max(candidates, key=lambda x: os.path.getmtime(x[0]))
+    if len(candidates) > 1:
+        print(f"   > ℹ️ KCTC 파일 {len(candidates)}개 중 최신본만 사용: {os.path.basename(f)}")
+    stock = {}
+    for r in range(hr + 1, len(df)):  # 서브헤더 행(합계/정상/보류…)은 코드 빈칸이라 자동 스킵
+        row = df.iloc[r].tolist()
+        code = row[code_col] if code_col < len(row) else None
+        if pd.isna(code):
+            continue
+        code = str(code).strip().upper()
+        if not code or code in ('SKU', 'SKU 번호', 'NAN'):
+            continue
+        qty = sum(parse_int(row[c]) for c in qty_cols if c < len(row))
+        for c in (code.split(',') if ',' in code else [code]):
+            c = c.strip()
+            if c and (not master_codes or c in master_codes):
+                stock[c] = stock.get(c, 0) + qty
+    print(f"   > KCTC 재고({kind}): {len(stock)}개 코드, 합계 {sum(stock.values()):,} ({os.path.basename(f)})")
+    return stock
+
+
+def parse_slack_domestic_stock(master_df, folder=None):
+    """슬랙 부족알림 전용 국내창고 재고.
+    `국내재고/` 폴더의 엑셀에서 헤더를 인식해 '코드'=품목코드, '가용'=가용재고를 읽어 코드별 합산.
+    - '창고코드' 컬럼이 있으면(재고원장) → DOMESTIC_WH_CODES(WH507/508/611/612) 창고만 합산.
+    - '창고코드'가 없으면(과거 센터별 파일) → 전 행 합산.
+    - KCTC 파일(3PL 물류센터)은 구조가 달라 parse_kctc_stock으로 별도 파싱 후 합산 (구양식 SKU/재고현황, 신양식 SKU 번호/정상재고/보류재고).
+    마스터 계정에 있는 코드만 유지(그 외 제외). 대시보드/부킹의 콜로세움 kr_stock과는 별개."""
+    if folder is None:
+        folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), '국내재고')
+    if not os.path.isdir(folder):
+        return {}
+    master_codes = set()
+    if master_df is not None and '품목코드' in master_df.columns:
+        for v in master_df['품목코드'].dropna().astype(str):
+            for c in (v.split(',') if ',' in v else [v]):
+                c = c.strip().upper()
+                if c and c != 'NAN':
+                    master_codes.add(c)
+    stock = {}
+    all_files = [f for f in sorted(glob.glob(os.path.join(folder, '*.xls')) +
+                                   glob.glob(os.path.join(folder, '*.xlsx')))
+                 if not os.path.basename(f).startswith('~$')
+                 and 'KCTC' not in os.path.basename(f).upper()]  # KCTC는 별도 파서로 처리
+    # 재고원장 파일이 있으면 '최신 1개'만 사용 (옛 파일이 쌓여도 중복합산 방지).
+    # 없으면 과거 센터별 파일들을 합산(하위호환).
+    ledger_files = [f for f in all_files if '재고원장' in os.path.basename(f)]
+    if ledger_files:
+        files = [max(ledger_files, key=os.path.getmtime)]
+        print(f"   > 국내재고 소스: 재고원장 최신본 사용 → {os.path.basename(files[0])}")
+    else:
+        # 이름에 KCTC가 없는 신양식 KCTC 파일('엑셀 저장_*')도 센터 파일로 오인하지 않게 제외
+        kctc_paths = {p for p, _, _ in find_kctc_files(folder)}
+        files = [f for f in all_files if '재고원장' not in os.path.basename(f) and f not in kctc_paths]
+    for f in files:
+        try:
+            df = pd.read_excel(f, header=None)
+        except Exception as e:
+            print(f"   > ⚠️ 국내재고 파일 읽기 실패({os.path.basename(f)}): {e}")
+            continue
+        # 헤더행: '코드' 셀이 있는 행 (재고원장/센터파일 공통)
+        hr = header = None
+        for r in range(min(10, len(df))):
+            vals = [str(v).strip() for v in df.iloc[r].tolist()]
+            if '코드' in vals:
+                hr, header = r, vals
+                break
+        if hr is None:
+            print(f"   > ⚠️ 국내재고 파일 헤더('코드') 못 찾음: {os.path.basename(f)}")
+            continue
+        code_col = header.index('코드')
+        qty_col = next((i for i, h in enumerate(header) if h == '가용'), None)
+        if qty_col is None:
+            qty_col = next((i for i, h in enumerate(header) if '가용' in h), None)
+        wh_col = next((i for i, h in enumerate(header) if h == '창고코드'), None)
+        if qty_col is None:
+            print(f"   > ⚠️ 국내재고 파일 '가용' 컬럼 못 찾음: {os.path.basename(f)}")
+            continue
+        for r in range(hr + 1, len(df)):
+            row = df.iloc[r].tolist()
+            if wh_col is not None:  # 재고원장: 지정 창고코드만
+                wc = row[wh_col] if wh_col < len(row) else None
+                if pd.isna(wc) or str(wc).strip() not in DOMESTIC_WH_CODES:
+                    continue
+            code = row[code_col] if code_col < len(row) else None
+            if pd.isna(code):
+                continue
+            code = str(code).strip().upper()
+            if not code or code == '코드':
+                continue
+            qty = parse_int(row[qty_col])
+            for c in (code.split(',') if ',' in code else [code]):
+                c = c.strip()
+                if c and (not master_codes or c in master_codes):
+                    stock[c] = stock.get(c, 0) + qty
+    # KCTC(3PL 물류센터) 재고 합산 — 재고원장과 다른 창고라 중복 아님
+    for c, q in parse_kctc_stock(folder, master_codes).items():
+        stock[c] = stock.get(c, 0) + q
+    return stock
+
+def build_shortage_report(json_tab1, domestic_map=None):
+    """tab1 JSON에서 부족 SKU를 '코드 단위로 국가 합산'해 단일 리스트로 반환.
+    - 부족재고 수량 = 부족한 권역들의 필요량 합계 − 국내창고 재고
+    - 필요시점 = 부족 권역 중 가장 급한 회전일(최소)
+    - 사유(항공긴급 여부) = 부족 권역 중 하나라도 항공긴급이면 항공긴급
+    - domestic_map: 국내창고(용인메인/서브/안성죽산 합산) 코드별 재고. 주면 이 값을 차감,
+      없으면 대시보드 kr_stock(콜로세움)으로 폴백.
+    MX 코드는 선크림(MX00086/87 등)만 포함하고 나머지는 제외."""
+    items = []
+    for row in json_tab1:
+        code = str(row.get('code', ''))
+        name = str(row.get('name', ''))
+        # MX 코드는 선크림만 알림에 포함 (2026-08-28 사용자 요청)
+        if code.upper().startswith('MX') and not _is_sunscreen(name):
+            continue
+        need_sum = 0
+        min_days = float('inf')
+        any_air = False
+        is_short = False
+        for region, _label, _short, base_thr in SLACK_REGION_META:
+            days = _slack_days_val(row.get(f'{region}_days'))
+            extra = 30 if row.get('is_heavy') else 0
+            is_air = days <= base_thr + extra
+            total = row.get(f'{region}_total', 0) or 0
+            safety = row.get(f'{region}_safety', 0) or 0
+            is_danger = safety > 0 and total < safety
+            if not (is_air or is_danger):
+                continue
+            is_short = True
+            need_sum += max(0, int(safety) - int(total)) if safety > 0 else 0
+            min_days = min(min_days, days)
+            any_air = any_air or is_air
+        if not is_short:
+            continue
+        # 국내창고 재고를 코드 단위로 1회 차감 → 추가 발주 필요 순부족분
+        if domestic_map is not None:
+            kr_stock = int(domestic_map.get(str(code).strip().upper(), 0))
+        else:
+            kr_stock = int(row.get('kr_stock', 0) or 0)
+        need_after_kr = max(0, need_sum - kr_stock)
+        items.append({
+            'code': code,
+            'name': name,
+            'mfr': str(row.get('mfr', '') or '').strip() or '(제조사 미상)',
+            'days': min_days,
+            'need': need_after_kr,        # 한국재고 차감 후 순부족(발주 필요분)
+            'need_overseas': need_sum,    # 차감 전 해외 부족합
+            'kr_stock': kr_stock,
+            'covered': need_after_kr == 0,  # 한국재고로 전량 커버(발송만 하면 됨)
+            'is_air': any_air,
+            'plc': row.get('plc_status', ''),
+        })
+    return items
+
+SLACK_FLAG = {'US': ':flag-us:', 'UK': ':flag-gb:', 'EU': ':flag-eu:'}
+
+def _group_by_mfr(section_items):
+    """제조사별로 묶어 (제조사, [항목...]) 리스트 반환.
+    그룹 내 상품은 부족재고 수량 내림차순, 제조사 그룹은 그룹 최대 부족량 내림차순."""
+    groups = {}
+    for it in section_items:
+        groups.setdefault(it['mfr'], []).append(it)
+    for its in groups.values():
+        its.sort(key=lambda x: x['need'], reverse=True)
+    return sorted(groups.items(), key=lambda kv: max(x['need'] for x in kv[1]), reverse=True)
+
+def _months_needed(days):
+    """회전일(재고 소진까지 남은 일수)을 '몇 개월 안에 필요'로 환산."""
+    if days == float('inf'):
+        return "-"
+    if days <= 0:
+        return "즉시 필요"
+    return f"{(int(days) + 29) // 30}개월 내 필요"
+
+def format_shortage_message(items):
+    """부족 리스트를 사유별 2개 섹션(① 항공긴급 ② 안전재고 미달)으로, 각 섹션 안은 제조사별 하위목록으로 변환.
+    각 줄 = 상품코드 · 제품명 · 부족재고 수량 · 몇 개월 안에 필요. (국가 구분 없음) 부족 없으면 None."""
+    if not items:
+        return None
+    air = sorted([it for it in items if it['is_air']], key=lambda x: x['days'])
+    safe = sorted([it for it in items if not it['is_air']], key=lambda x: x['days'])
+    today = datetime.now().strftime('%Y-%m-%d %H:%M')
+    lines = [
+        f":package: *재고 부족 알림* — {today} 빌드",
+        f"항공긴급 {len(air)}건 · 안전재고 미달 {len(safe)}건 · _제조사별 · 상품코드·제품명·부족수량(해외+국내재고 차감후)·필요시점_ · MX코드는 선크림만 포함",
+    ]
+
+    def render(it):
+        tag = " _(단종)_" if it['plc'] == '단종' else ""
+        if it['covered']:
+            qty = f"부족 *0* (국내재고 {it['kr_stock']:,}개로 커버 — 발송만 필요)"
+        else:
+            qty = f"부족 *{it['need']:,}*"
+        return f"    `{it['code']}` {it['name']} · {qty} · {_months_needed(it['days'])}{tag}"
+
+    def render_section(title, section_items):
+        lines.append(f"\n{title}")
+        if not section_items:
+            lines.append("_해당 없음_")
+            return
+        for mfr, its in _group_by_mfr(section_items):
+            lines.append(f"  ▸ *{mfr}* ({len(its)}건)")
+            for it in its:
+                lines.append(render(it))
+
+    render_section(":airplane: *1. 항공긴급 (매우 긴급)*", air)
+    render_section(":rotating_light: *2. 안전재고 미달*", safe)
+
+    return "\n".join(lines)
+
+SLACK_MSG_FILE = 'slack_message.txt'      # app.py 빌드 때 렌더한 부족 메시지를 여기에 저장
+SLACK_PAUSE_FILE = 'slack_paused.txt'     # 존재하면 발송 정지
+SLACK_MARKER_FILE = 'slack_last_sent.txt' # 마지막 발송 날짜 (하루 1회 가드)
+
+def save_slack_message(json_tab1, domestic_map=None):
+    """부족재고 메시지를 렌더해 파일로 저장(발송하지 않음).
+    실제 발송은 update.bat의 최종 업로드(git push) 성공 후 `python app.py --send-slack`에서 1회만 수행."""
+    items = build_shortage_report(json_tab1, domestic_map)
+    message = format_shortage_message(items)
+    if message is None:
+        message = ":white_check_mark: *재고 부족 알림* — 항공긴급/안전재고 미달 SKU 없음"
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(base_dir, SLACK_MSG_FILE), 'w', encoding='utf-8') as f:
+        f.write(message)
+    print(f"   > 📝 Slack 부족 메시지 준비 완료 (부족 {len(items)}건) — 발송은 최종 업로드 후 1회")
+
+def send_saved_slack_message():
+    """저장된 부족 메시지(slack_message.txt)를 Slack으로 발송.
+    - update.bat이 git push 성공 후 `python app.py --send-slack`로 호출 → '최종 업로드에만 1회' 발송
+    - 하루 1회 가드(slack_last_sent.txt) + 일시정지(slack_paused.txt) + 웹훅 미설정 시 자동 스킵."""
+    import urllib.request
+    webhook = os.environ.get('SCM_SLACK_WEBHOOK', '').strip()
+    if not webhook:
+        print("ℹ️ Slack 웹훅(SCM_SLACK_WEBHOOK) 미설정 — 알림 건너뜀")
+        return
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    if os.path.exists(os.path.join(base_dir, SLACK_PAUSE_FILE)):
+        print("⏸️ Slack 알림 일시정지 상태(slack_paused.txt) — 발송 건너뜀")
+        return
+    marker = os.path.join(base_dir, SLACK_MARKER_FILE)
+    today = datetime.now().strftime('%Y-%m-%d')
+    try:
+        if os.path.exists(marker):
+            with open(marker, encoding='utf-8') as f:
+                if f.read().strip() == today:
+                    print("ℹ️ 오늘 이미 Slack 알림을 보냈습니다 — 재발송 생략 (하루 1회)")
+                    return
+    except Exception:
+        pass
+    msg_path = os.path.join(base_dir, SLACK_MSG_FILE)
+    if not os.path.exists(msg_path):
+        print("⚠️ 발송할 메시지(slack_message.txt)가 없습니다 — 먼저 app.py 빌드가 필요합니다")
+        return
+    with open(msg_path, encoding='utf-8') as f:
+        message = f.read()
+    payload = json.dumps({"text": message}).encode('utf-8')
+    req = urllib.request.Request(webhook, data=payload,
+                                 headers={'Content-Type': 'application/json'})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        resp.read()
+    try:
+        with open(marker, 'w', encoding='utf-8') as f:
+            f.write(today)
+    except Exception:
+        pass
+    print("✅ Slack 재고부족 알림 전송 완료 (최종 업로드 후 1회)")
+
 
 if __name__ == "__main__":
-    run_dashboard_generator()
+    import sys
+    if '--send-slack' in sys.argv:
+        # update.bat이 git push 성공 후 호출 — 저장된 메시지를 1회 발송
+        send_saved_slack_message()
+    else:
+        run_dashboard_generator()
