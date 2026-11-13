@@ -547,11 +547,13 @@ def parse_transit_schedule(file_path, year=2026):
         code_col_idx = None
         date_cols = []
         tbd_cols = []   # ETA 미정 차수 컬럼 (예: '해상4차(TBD)', '레오스 특송(TBD)') — 날짜 없이 수량만 있음
+        broken_cols = []  # 차수 열처럼 보이는데 날짜/TBD를 못 읽은 열 (예: '항공5차(7월15일)', '해상3차(7/32)')
 
         date_pattern = re.compile(r'\((\d{1,2})/(\d{1,2})\)')
+        batch_pattern = re.compile(r'\d+\s*차|특송')  # 차수 열 판별 ('항공5차', '해상22차', '레오스 특송')
 
         for i, h in enumerate(header):
-            if h is None:
+            if h is None or (isinstance(h, float) and pd.isna(h)):
                 continue
             h_str = str(h)
             if '품목코드' in h_str and code_col_idx is None:
@@ -564,13 +566,21 @@ def parse_transit_schedule(file_path, year=2026):
                     eta_date = datetime(year, month, day).date()
                     date_cols.append((i, eta_date, h_str.strip()))
                 except ValueError:
-                    pass
+                    broken_cols.append(h_str.strip())  # 존재하지 않는 날짜 (예: 7/32)
             elif 'TBD' in h_str.upper():
                 tbd_cols.append((i, h_str.strip()))
+            elif batch_pattern.search(h_str):
+                broken_cols.append(h_str.strip())
 
         if code_col_idx is None:
             print(f"   > ⚠️ '{matched_sheet}': 품목코드 컬럼 못 찾음")
             continue
+
+        if broken_cols:
+            # 형식이 깨진 차수 열은 입고 일정에서 빠지므로 반드시 경고 (정상 차수 열은 아래에서 그대로 파싱)
+            print(f"   > ⚠️ '{matched_sheet}': 차수 열 {len(broken_cols)}개의 ETA 형식을 읽지 못해 입고 일정에서 제외됨 "
+                  f"→ {', '.join(broken_cols[:5])}{' 외' if len(broken_cols) > 5 else ''} "
+                  f"(형식: '항공5차(7/15)' 또는 '해상4차(TBD)')")
 
         if date_cols or tbd_cols:
             for r in range(header_row + 1, len(df_raw)):
@@ -617,7 +627,9 @@ def parse_transit_schedule(file_path, year=2026):
         qty_col_idx = next((i for i, h in enumerate(header) if h is not None and str(h).strip() == '수량'), None)
 
         if eta_date_col_idx is None or qty_col_idx is None:
-            print(f"   > ⚠️ '{matched_sheet}': 도착일 컬럼(다중 날짜 또는 입고 예정일+수량) 못 찾음")
+            if not broken_cols:
+                # 차수 열 자체가 없음 = 현재 이 경로로 이동 중인 재고가 없음 (정상 상태, 경고 아님)
+                print(f"   > ℹ️ '{matched_sheet}': 이동중 차수 없음")
             continue
 
         row_count = 0
@@ -870,12 +882,22 @@ def parse_product_status(file_path, sheet_name='입고 스케줄_상세'):
 def parse_forecast_sales(file_path, base_year=2026):
     """포캐스팅 파일의 'N월_판매예정' 탭들에서 SKU별 US/UK/EU 월별 판매예정 수량 파싱.
 
-    시트 구조: 1행=부서, 2행=채널명, 3행=헤더('품목코드'/'수량'/'매출원가'), 4행부터 데이터.
+    시트 구조: '품목코드'가 있는 행=헤더('품목코드'/'수량'/'매출원가'), 그 바로 윗행=채널명, 헤더 다음 행부터 데이터.
+    (2026-11 이전엔 헤더가 3행 고정이었으나, 맨 위에 메모 행('블프' 등)이 추가되며 4행으로 밀림 → 앞 8행에서 탐색)
     채널명이 '미국*'이면 US, '영국*'이면 UK, 'EU*'이면 EU로 합산 (MX/일본/글로벌 등 나머지 채널 제외).
-    시트명 'N월_판매예정'은 base_year, 'NN년 N월_판매예정'은 20NN년으로 해석.
+    '마케팅(미국)' 같은 부서 소계 열은 '미국'으로 시작하지 않아 자동 제외 → 이중 합산 없음.
+    시트명 'NN년 N월_판매예정'은 20NN년. 연도 없는 'N월_판매예정'은 오늘 기준 -5~+6개월 범위로 연도를 추정
+    (예: 2026-11 기준 '11월'·'12월'=2026, '1월'~'5월'=2027). base_year는 추정 불가 시에만 쓰는 예비값.
 
     반환: ({품목코드(upper): {"YYYY-MM": {"us":n, "uk":n, "eu":n}}}, [월 키 정렬 리스트])
     """
+    today = datetime.now()
+
+    def infer_year(month):
+        d = (month - today.month) % 12
+        if d > 6:
+            d -= 12  # 7개월 넘게 앞이면 지난 달로 간주 (예: 1월에 보는 '11월' 시트 = 작년 11월)
+        return today.year + (today.month - 1 + d) // 12
     result = {}
     months_found = set()
     if not os.path.exists(file_path):
@@ -887,22 +909,26 @@ def parse_forecast_sales(file_path, base_year=2026):
         m = pat.match(sheet.strip())
         if not m:
             continue
-        year = 2000 + int(m.group(1)) if m.group(1) else base_year
+        year = 2000 + int(m.group(1)) if m.group(1) else (infer_year(int(m.group(2))) or base_year)
         month_key = f"{year}-{int(m.group(2)):02d}"
         ws = wb[sheet]
         rows = ws.iter_rows(values_only=True)
-        try:
-            next(rows)          # 1행: 부서
-            r2 = next(rows)     # 2행: 채널명
-            r3 = next(rows)     # 3행: 수량/매출원가 헤더
-        except StopIteration:
-            continue
-        # 품목코드 컬럼 위치 (통상 A열이지만 방어적으로 탐색)
-        code_idx = 0
-        for i, v in enumerate(r3):
-            if str(v).strip() == '품목코드':
-                code_idx = i
+        # 헤더 행('품목코드' 포함)을 앞 8행에서 탐색, 채널명은 그 바로 윗행
+        head = []
+        r2 = r3 = None
+        for _ in range(8):
+            try:
+                cur = next(rows)
+            except StopIteration:
                 break
+            if cur and any(str(v).strip() == '품목코드' for v in cur if v is not None) and head:
+                r2, r3 = head[-1], cur
+                break
+            head.append(cur)
+        if r3 is None:
+            print(f"   > ⚠️ '{sheet}' 탭에서 '품목코드' 헤더 행을 찾지 못해 건너뜀")
+            continue
+        code_idx = next(i for i, v in enumerate(r3) if v is not None and str(v).strip() == '품목코드')
         region_cols = {'us': [], 'uk': [], 'eu': []}
         for i, name in enumerate(r2):
             if not name or i >= len(r3) or str(r3[i]).strip() != '수량':
