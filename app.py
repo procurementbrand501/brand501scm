@@ -451,8 +451,8 @@ def build_group_fcst(master_df, fcst_map):
                 continue
             g = out.setdefault(gname, {})
             for mk, regs in months.items():
-                o = g.setdefault(mk, {'us': 0, 'uk': 0, 'eu': 0})
-                for rg in ('us', 'uk', 'eu'):
+                o = g.setdefault(mk, {'us': 0, 'uk': 0, 'eu': 0, 'jp': 0})
+                for rg in ('us', 'uk', 'eu', 'jp'):
                     o[rg] += regs.get(rg, 0)
     return out
 
@@ -936,7 +936,7 @@ def parse_forecast_sales(file_path, base_year=2026):
             print(f"   > ⚠️ '{sheet}' 탭에서 '품목코드' 헤더 행을 찾지 못해 건너뜀")
             continue
         code_idx = next(i for i, v in enumerate(r3) if v is not None and str(v).strip() == '품목코드')
-        region_cols = {'us': [], 'uk': [], 'eu': []}
+        region_cols = {'us': [], 'uk': [], 'eu': [], 'jp': []}
         for i, name in enumerate(r2):
             if not name or i >= len(r3) or str(r3[i]).strip() != '수량':
                 continue
@@ -947,6 +947,8 @@ def parse_forecast_sales(file_path, base_year=2026):
                 region_cols['uk'].append(i)
             elif nm.startswith('EU'):
                 region_cols['eu'].append(i)
+            elif nm.startswith('일본'):          # 일본 라쿠텐/큐텐/아마존 (마케팅(일본) 소계 열은 제외됨)
+                region_cols['jp'].append(i)
         if not any(region_cols.values()):
             print(f"   > ⚠️ '{sheet}' 탭에서 미국/영국/EU 수량 컬럼을 찾지 못해 건너뜀")
             continue
@@ -957,7 +959,7 @@ def parse_forecast_sales(file_path, base_year=2026):
             code = str(row[code_idx]).strip().upper()
             if not code:
                 continue
-            entry = result.setdefault(code, {}).setdefault(month_key, {'us': 0, 'uk': 0, 'eu': 0})
+            entry = result.setdefault(code, {}).setdefault(month_key, {'us': 0, 'uk': 0, 'eu': 0, 'jp': 0})
             for reg, cols in region_cols.items():
                 s = 0.0
                 for c in cols:
@@ -1391,11 +1393,18 @@ def build_category_lookup(master_df):
 #   full=False: 재고만 (판매/출고 실적 데이터가 아직 없는 권역 — 2026-11-19 사용자 결정 "재고만 우선 표시")
 V2_REGIONS = [
     ('us', '미국', True), ('uk', '영국', True), ('eu', '유럽 연합', True),
-    ('jp', '일본', False), ('cn', '중국', False), ('krb2b', '한국 B2B', False), ('hk', '홍콩', False),
+    ('jp', '일본', True), ('cn', '중국', False), ('krb2b', '한국 B2B', False), ('hk', '홍콩', False),
     ('tw', '대만', False), ('sg', '싱가포르', False), ('ca', '캐나다', False), ('au', '호주', False),
     ('mx', '멕시코', False),
 ]
-GRADE_REGIONS = ['us', 'uk', 'eu']   # 현재 출고/판매 수량이 있는 권역 (나머지는 0으로 등급 계산)
+GRADE_REGIONS = ['us', 'uk', 'eu', 'jp']   # 현재 출고/판매 수량이 있는 권역 (나머지는 0으로 등급 계산)
+
+# 일본(JP) — 2026-11-19 추가. 판매 파일 '2026_일본_SCM_재고관리*.xlsx' (US/UK/EU 판매 파일과 같은 양식).
+# 재고 = 일본 창고(국제·쉽너지) 합계, 이동중 재고 데이터는 아직 없음(항공·해상이동 0).
+# 안전재고 30일 / 항공 리드타임 10일 / 해상 리드타임 20일 (사용자 지정) — 화면 임계선·부킹 시간창은 template_v2.html JP 규칙.
+JP_SAFETY_DAYS = 30
+JP_AIR_LEAD_DAYS = 10
+JP_SEA_LEAD_DAYS = 20
 # 일반/FBA/FBT 재고 파일의 창고명 → 추가 권역 (부분 문자열 매칭, 위에서부터 먼저 걸리는 것)
 EXTRA_REGION_WAREHOUSE_KEYWORDS = [
     ('krb2b', ['국내']), ('jp', ['일본']), ('cn', ['중국']), ('hk', ['홍콩']), ('tw', ['대만']),
@@ -1614,7 +1623,8 @@ def _inject_extra_region_rows(json_tab1, json_tab2, master_df, extra_stock, grou
     return added1, added2
 
 
-def enrich_v2_fields(json_tab1, json_tab2, master_df, sales_files, excluded_codes, unreg_rows=None):
+def enrich_v2_fields(json_tab1, json_tab2, master_df, sales_files, excluded_codes, unreg_rows=None,
+                     jp_sales_df=None, jp_daily=None):
     """층별화 등급 + 카테고리 + 추가 권역 재고를 tab1(개별 코드)/tab2(통합 제품명) JSON 행에 부착하고 메타 반환.
     등급 수량: US/UK = 어크로스 비 수불부 출고량(없는 달은 판매 파일), EU = 판매 파일 (2026-11-19 사용자 결정).
     화면에서 권역을 고르면 grade_universe로 브라우저가 등급을 다시 계산함."""
@@ -1707,7 +1717,8 @@ def enrich_v2_fields(json_tab1, json_tab2, master_df, sales_files, excluded_code
 
     # 추가 권역 재고 (tab2는 마스터 매핑으로 그룹 합산)
     extra_stock, extra_wh = build_extra_region_stock()
-    extra_keys = [r for r, _l, full in V2_REGIONS if not full]
+    # 창고 재고를 재고 파일 창고명으로 붙이는 권역: 재고만 권역 + JP(전체 블록이지만 재고 출처는 같은 방식)
+    extra_keys = [r for r, _l, full in V2_REGIONS if not full] + ['jp']
     group_extra = {}
     for c, d in extra_stock.items():
         g = code2group.get(c)
@@ -1721,6 +1732,55 @@ def enrich_v2_fields(json_tab1, json_tab2, master_df, sales_files, excluded_code
                                                extra_keys, excluded_codes)
     print(f"   > 새 권역 재고만 있는 행 추가: 개별코드 {added1}개 / 통합제품명 {added2}개")
 
+    # JP 일판매 (개별코드: 코드별 / 통합제품명: 멤버 코드 일자별 합산 후 재계산 — build_group_sales와 같은 방식)
+    jp_code = {}
+    if jp_sales_df is not None and len(jp_sales_df):
+        for rec in jp_sales_df.to_dict('records'):
+            jp_code[str(rec['품목코드']).strip().upper()] = rec
+    jp_group = {}
+    if jp_daily:
+        gd = {}
+        for c, d in jp_daily.items():
+            g = code2group.get(str(c).strip().upper())
+            if not g:
+                continue
+            e = gd.setdefault(g, {})
+            for dt, q in d.items():
+                e[dt] = e.get(dt, 0) + q
+        if gd:
+            for rec in summarize_sales_28d(gd, 'jp').to_dict('records'):
+                jp_group[rec['품목코드']] = rec
+    elif jp_code:   # 일자별 파싱 실패(당월 일평균 폴백) → 코드 합산
+        for c, rec in jp_code.items():
+            g = code2group.get(c)
+            if g:
+                acc = jp_group.setdefault(g, {'jp_sales': 0, 'jp_sales_window': 28, 'jp_last7': [0] * 7, 'jp_spike': False})
+                acc['jp_sales'] += int(rec.get('jp_sales', 0) or 0)
+
+    # 일본에서 팔리는데 재고가 0이라 행이 없는 코드/그룹도 표시 (결품 판매중 — US/UK/EU와 같은 규칙)
+    jp_sell_codes = {c: {'jp': 1} for c, rec in jp_code.items() if (rec.get('jp_sales') or 0) > 0
+                     or any((rec.get('jp_last7') or []))}
+    jp_sell_groups = {g: {'jp': 1} for g, rec in jp_group.items() if (rec.get('jp_sales') or 0) > 0}
+    a1, a2 = _inject_extra_region_rows(json_tab1, json_tab2, master_df, jp_sell_codes, jp_sell_groups,
+                                       ['jp'], excluded_codes)
+    if a1 or a2:
+        print(f"   > 일본 판매 중인데 재고 0인 행 추가: 개별코드 {a1}개 / 통합제품명 {a2}개")
+
+    def apply_jp(row, rec):
+        """JP 전체 블록 필드: 이동중 0, 총재고=창고재고, 안전재고=일판매×30일(중량물 +30), 회전일."""
+        rec = rec or {}
+        sales = int(rec.get('jp_sales', 0) or 0)
+        last7 = rec.get('jp_last7')
+        row['jp_air'] = row['jp_sea'] = 0
+        row['jp_total'] = int(row.get('jp_stock', 0) or 0)
+        row['jp_sales'] = sales
+        row['jp_sales_window'] = int(rec.get('jp_sales_window', 28) or 28)
+        row['jp_last7'] = [int(x) for x in last7] if isinstance(last7, list) else [0] * 7
+        row['jp_spike'] = bool(rec.get('jp_spike', False))
+        heavy = HEAVY_SAFETY_EXTRA_DAYS if row.get('is_heavy') else 0
+        row['jp_safety'] = int(sales * (JP_SAFETY_DAYS + heavy))
+        row['jp_days'] = "여유" if sales <= 0 else str(int(row['jp_total'] / sales))
+
     empty = {'grade': 'C', 'share': 0, 'cum': 100, 'qty': 0}
     for row in json_tab1:
         key = str(row['code']).strip().upper()
@@ -1730,6 +1790,7 @@ def enrich_v2_fields(json_tab1, json_tab2, master_df, sales_files, excluded_code
         es = extra_stock.get(key, {})
         for r in extra_keys:
             row[f'{r}_stock'] = int(es.get(r, 0))
+        apply_jp(row, jp_code.get(key))
     for row in json_tab2:
         gname = str(row.get('통합 제품명', ''))
         g = grades2.get(gname, empty)
@@ -1739,6 +1800,7 @@ def enrich_v2_fields(json_tab1, json_tab2, master_df, sales_files, excluded_code
         es = group_extra.get(gname) or extra_stock.get(str(row['code']).strip().upper(), {})
         for r in extra_keys:
             row[f'{r}_stock'] = int(es.get(r, 0))
+        apply_jp(row, jp_group.get(gname) or jp_code.get(rcode))
 
     def count(rows):
         cnt = {'SA': 0, 'A': 0, 'B': 0, 'C': 0}
@@ -1763,6 +1825,7 @@ def enrich_v2_fields(json_tab1, json_tab2, master_df, sales_files, excluded_code
         "category_missing": sorted(cat_miss),
         "regions": [{"key": r, "label": l, "full": full} for r, l, full in V2_REGIONS],
         "grade_regions": GRADE_REGIONS,
+        "jp_rule": {"safety_days": JP_SAFETY_DAYS, "air_lead_days": JP_AIR_LEAD_DAYS, "sea_lead_days": JP_SEA_LEAD_DAYS},
         "extra_warehouses": extra_wh,
         "universe_tab1": uni1,
         "universe_tab2": uni2,
@@ -1854,6 +1917,7 @@ def run_dashboard_generator():
     excel_us_sales = find_latest_sales_file(["미국"])
     excel_uk_sales = find_latest_sales_file(["영국", "UK"])
     excel_eu_sales = find_latest_sales_file(["EU"])
+    excel_jp_sales = find_latest_sales_file(["일본"])   # 없으면 리뉴얼 화면의 JP 판매만 0 (빌드는 계속)
     excel_transit  = "2025_이동중_재고_현황.xlsx"
     excel_master   = "마스터 계정.xlsx"
     excel_inbound  = "2026_SCM_영업채널별_판매_포캐스팅_공유용.xlsx"
@@ -1887,6 +1951,12 @@ def run_dashboard_generator():
     us_sales_df, us_daily = read_sales_rolling(excel_us_sales, "us")
     uk_sales_df, uk_daily = read_sales_rolling(excel_uk_sales, "uk")
     eu_sales_df, eu_daily = read_sales_rolling(excel_eu_sales, "eu")
+    if excel_jp_sales:
+        print(f"   > JP판매: {excel_jp_sales} 자동 선택")
+        jp_sales_df, jp_daily = read_sales_rolling(excel_jp_sales, "jp")
+    else:
+        print("   > ℹ️ JP판매 파일(*일본*SCM_재고관리*.xlsx) 없음 — 일본 일판매 0으로 표시")
+        jp_sales_df, jp_daily = None, {}
 
     print("🔄 [4/7] 이동중(In-Transit) 합산 데이터 결합 중...")
     transit_df = read_transit_data(excel_transit)
@@ -2107,8 +2177,8 @@ def run_dashboard_generator():
             if not isinstance(d, dict):
                 continue
             for mk, regs in d.items():
-                o = out.setdefault(mk, {'us': 0, 'uk': 0, 'eu': 0})
-                for r in ('us', 'uk', 'eu'):
+                o = out.setdefault(mk, {'us': 0, 'uk': 0, 'eu': 0, 'jp': 0})
+                for r in ('us', 'uk', 'eu', 'jp'):
                     o[r] += regs.get(r, 0)
         return out
 
@@ -2204,8 +2274,8 @@ def run_dashboard_generator():
             unreg_rows = build_unregistered_rows(unregistered_df)
             grade_meta = enrich_v2_fields(
                 json_tab1_v2, json_tab2_v2, master_df,
-                {'us': excel_us_sales, 'uk': excel_uk_sales, 'eu': excel_eu_sales},
-                excluded_codes, unreg_rows=unreg_rows)
+                {'us': excel_us_sales, 'uk': excel_uk_sales, 'eu': excel_eu_sales, 'jp': excel_jp_sales},
+                excluded_codes, unreg_rows=unreg_rows, jp_sales_df=jp_sales_df, jp_daily=jp_daily)
             print(f"   > 기간 {grade_meta['months'][0]} ~ {grade_meta['months'][-1]}, "
                   f"전제품 판매 {grade_meta['total_qty']:,}개 | 개별코드 {grade_meta['count_tab1']} | 통합제품명 {grade_meta['count_tab2']}")
             if grade_meta.get('category_missing'):
@@ -2257,7 +2327,7 @@ def run_dashboard_generator():
     # 일별 판매 추이 (통합 제품명별, 최근 28일) — 모달의 '일별 판매' 탭용
     today = datetime.now().date()
     win_dates = [today - timedelta(days=28) + timedelta(days=i) for i in range(28)]
-    region_daily = {'us': us_daily, 'uk': uk_daily, 'eu': eu_daily}
+    region_daily = {'us': us_daily, 'uk': uk_daily, 'eu': eu_daily, 'jp': jp_daily or {}}
     daily_sales_map = {}
     if '통합 제품명' in merged.columns:
         for unified_name, group in merged.groupby('통합 제품명'):

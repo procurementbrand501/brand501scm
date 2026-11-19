@@ -13,6 +13,7 @@
             --us-color: #ebf5ff;
             --uk-color: #fef3c7;
             --eu-color: #f0fdf4;
+            --jp-color: #fdf2f8;
             --danger-bg: #fee2e2;
             --danger-text: #991b1b;
             --warning-bg: #fef3c7;
@@ -75,6 +76,7 @@
         .kpi-region-breakdown .r-us { background: #dbeafe; color: #1e40af; }
         .kpi-region-breakdown .r-uk { background: #fef3c7; color: #92400e; }
         .kpi-region-breakdown .r-eu { background: #dcfce7; color: #065f46; }
+        .kpi-region-breakdown .r-jp { background: #fce7f3; color: #9d174d; }
         .pipeline-card { background: #ffffff; border: 1px solid var(--border-color); border-radius: 10px; padding: 16px 18px; }
         .pipeline-label { font-size: 12px; color: #64748b; margin-bottom: 10px; font-weight: 600; }
         .pipeline-bar-wrap { display: flex; height: 22px; border-radius: 6px; overflow: hidden; gap: 2px; }
@@ -101,6 +103,7 @@
         .col-us   { background-color: var(--us-color); }
         .col-uk   { background-color: var(--uk-color); }
         .col-eu   { background-color: var(--eu-color); }
+        .col-jp   { background-color: var(--jp-color); }
         .font-bold { font-weight: 700; }
         td.font-bold.col-code { max-width: 90px; width: 90px; word-break: break-all; white-space: normal; font-size: 11px; line-height: 1.3; }
         .text-left { text-align: left; padding-left: 15px; }
@@ -128,6 +131,7 @@
         .filter-btn.on-us { background: #1e3a8a; color: #fff; border-color: #1e3a8a; }
         .filter-btn.on-uk { background: #92400e; color: #fff; border-color: #92400e; }
         .filter-btn.on-eu { background: #065f46; color: #fff; border-color: #065f46; }
+        .filter-btn.on-jp { background: #9d174d; color: #fff; border-color: #9d174d; }
         .export-btn { padding: 6px 16px; border: 1.5px solid #059669; border-radius: 20px; font-size: 12.5px; font-weight: 700; cursor: pointer; background: #059669; color: #fff; transition: all .15s; user-select: none; white-space: nowrap; }
         .export-btn:hover { background: #047857; border-color: #047857; }
 
@@ -257,6 +261,7 @@
                 <span class="r-us" id="kpi-urgent-us">US 0</span>
                 <span class="r-uk" id="kpi-urgent-uk">UK 0</span>
                 <span class="r-eu" id="kpi-urgent-eu">EU 0</span>
+                <span class="r-jp" id="kpi-urgent-jp">JP 0</span>
             </div>
         </div>
         <div class="kpi-card warning">
@@ -315,6 +320,7 @@
             <button class="filter-btn" id="f1-us" onclick="toggleFilter('1','us')">✈️ 미국 항공 긴급</button>
             <button class="filter-btn" id="f1-uk" onclick="toggleFilter('1','uk')">✈️ 영국 항공 긴급</button>
             <button class="filter-btn" id="f1-eu" onclick="toggleFilter('1','eu')">✈️ 유럽 항공 긴급</button>
+            <button class="filter-btn" id="f1-jp" onclick="toggleFilter('1','jp')">✈️ 일본 항공 긴급</button>
         </div>
         <button class="export-btn" onclick="exportTab('1')">📥 엑셀 다운로드</button>
         <div class="plc-filter-group">
@@ -356,6 +362,7 @@
             <button class="filter-btn" id="f2-us" onclick="toggleFilter('2','us')">✈️ 미국 항공 긴급</button>
             <button class="filter-btn" id="f2-uk" onclick="toggleFilter('2','uk')">✈️ 영국 항공 긴급</button>
             <button class="filter-btn" id="f2-eu" onclick="toggleFilter('2','eu')">✈️ 유럽 항공 긴급</button>
+            <button class="filter-btn" id="f2-jp" onclick="toggleFilter('2','jp')">✈️ 일본 항공 긴급</button>
         </div>
         <button class="export-btn" onclick="exportTab('2')">📥 엑셀 다운로드</button>
         <div class="plc-filter-group">
@@ -435,6 +442,7 @@
                     <button class="modal-region-btn active" id="modal-tab-us" onclick="switchModalRegion('us')">🇺🇸 미국 (US)</button>
                     <button class="modal-region-btn" id="modal-tab-uk" onclick="switchModalRegion('uk')">🇬🇧 영국 (UK)</button>
                     <button class="modal-region-btn" id="modal-tab-eu" onclick="switchModalRegion('eu')">🇪🇺 유럽 (EU)</button>
+                    <button class="modal-region-btn" id="modal-tab-jp" onclick="switchModalRegion('jp')">🇯🇵 일본 (JP)</button>
                 </div>
                 <div id="modal-waterfall-content"></div>
             </div>
@@ -539,8 +547,9 @@
         const c = parseInt(cur), p = parseInt(prev);
         if (isNaN(c) && isNaN(p)) return '';
         // 위험구간 전이 감지: 과거엔 항공 긴급이 아니었는데 지금 긴급 → 강조 (재집계로 갑자기 튀는 케이스)
-        const nowAir = !isNaN(c) && (region==='us' ? c <= 45+(isHeavy?30:0) : c <= 60+(isHeavy?30:0));
-        const pastAir = !isNaN(p) && (region==='us' ? p <= 45+(isHeavy?30:0) : p <= 60+(isHeavy?30:0));
+        const airLim = daysRule(region).air + (isHeavy ? 30 : 0);
+        const nowAir = !isNaN(c) && c <= airLim;
+        const pastAir = !isNaN(p) && p <= airLim;
         if (nowAir && !pastAir) return ` <span class="delta delta-alert" title="${compareDate}: ${prev}일 → 항공 긴급권 진입">⚠︎ 위험전이</span>`;
         if (isNaN(c) || isNaN(p)) {
             if (String(cur) !== String(prev)) return ` <span class="delta delta-flat" title="${compareDate}: ${prev}">${prev}→</span>`;
@@ -554,7 +563,7 @@
     function computeKPI(data) {
         let totalStock=0, usStock=0, ukStock=0, euStock=0;
         let urgentSet=new Set();
-        let urgentUsCount=0, urgentUkCount=0, urgentEuCount=0;
+        let urgentUsCount=0, urgentUkCount=0, urgentEuCount=0, urgentJpCount=0;
         let breachSet=new Set(), totalShortage=0;
         let sumTotalForAvg=0, sumSalesForAvg=0;
         let totalAir=0, totalSea=0;
@@ -581,12 +590,16 @@
             if (usAirHit) urgentUsCount++;
             if (ukAirHit) urgentUkCount++;
             if (euAirHit) urgentEuCount++;
-            if (usAirHit||ukAirHit||euAirHit) urgentSet.add(idx);
+            const jpAirHit=isAirUrgent(row,'jp');
+            if (jpAirHit) urgentJpCount++;
+            if (usAirHit||ukAirHit||euAirHit||jpAirHit) urgentSet.add(idx);
 
             let breached=false;
             if (usT<usS) { totalShortage+=(usS-usT); breached=true; }
             if (ukT<ukS) { totalShortage+=(ukS-ukT); breached=true; }
             if (euT<euS) { totalShortage+=(euS-euT); breached=true; }
+            const jpT=row.jp_total||0, jpS=row.jp_safety||0;
+            if (jpT<jpS) { totalShortage+=(jpS-jpT); breached=true; }
             if (breached) breachSet.add(idx);
 
             if (row.us_sales>0) { sumTotalForAvg+=usT; sumSalesForAvg+=row.us_sales; }
@@ -606,7 +619,7 @@
         const euPct = grandTotal>0 ? (100-usPct-ukPct) : 0;
 
         return { totalStock, usStock, ukStock, euStock, usPct, ukPct, euPct,
-                 urgentCount: urgentSet.size, urgentUsCount, urgentUkCount, urgentEuCount,
+                 urgentCount: urgentSet.size, urgentUsCount, urgentUkCount, urgentEuCount, urgentJpCount,
                  breachCount: breachSet.size, totalShortage, avgDays,
                  totalAir, totalSea, regionAir, regionSea, overstockCount: overstockSet.size,
                  totalValue, regionValue };
@@ -620,6 +633,7 @@
         document.getElementById('kpi-urgent-us').textContent = `US ${k.urgentUsCount}`;
         document.getElementById('kpi-urgent-uk').textContent = `UK ${k.urgentUkCount}`;
         document.getElementById('kpi-urgent-eu').textContent = `EU ${k.urgentEuCount}`;
+        document.getElementById('kpi-urgent-jp').textContent = `JP ${k.urgentJpCount}`;
         document.getElementById('kpi-safety-breach').innerHTML = k.breachCount+' <span>SKU</span>';
         document.getElementById('kpi-safety-shortage').textContent = `총 부족 ${k.totalShortage.toLocaleString()} EA`;
         document.getElementById('kpi-avg-days').innerHTML = k.avgDays+' <span>일</span>';
@@ -682,7 +696,7 @@
 
         const vals = { us: usVal, uk: ukVal, eu: euVal };
         const cells = selRegionObjs().map(r => r.full
-            ? `${blank}${blank}${blank}${cell(vals[r.key])}${blank}${blank}${blank}${blank}`
+            ? `${blank}${blank}${blank}${vals[r.key] !== undefined ? cell(vals[r.key]) : blank}${blank}${blank}${blank}${blank}`
             : blank).join('');
         el.innerHTML = `<tr class="table-footer-row" title="${unmatchedTitle}">
             <td colspan="7" style="text-align:left;padding-left:15px;">합계 (재고금액, 원가 기준 · 미국/영국/유럽)${flag}</td>
@@ -700,32 +714,43 @@
     // 중량물은 항공 운임 프리미엄이 커서 경고를 30일 먼저 발동 — 해상으로 막을 시간을 확보 (안전재고 +30일과 세트)
     const HEAVY_EXTRA_DAYS = 30;
 
+    /* 권역별 회전일 임계선 (일). air = 이 일수 이하면 ✈️ 항공 긴급, danger = 안전재고 일수 미만이면 🚨, warn = 이하면 ⚠️
+       JP(2026-11-19): 해상 리드타임 20일 안에 바닥나면 해상은 늦음 → 항공, 안전재고 30일, 주의 45일.
+       항공 리드타임 10일 이하는 항공으로도 결품 가능(❗ 표시). */
+    const JP_RULE = (gradeMeta && gradeMeta.jp_rule) || { safety_days: 30, air_lead_days: 10, sea_lead_days: 20 };
+    const DAYS_RULE = {
+        us: { air: 45, danger: 90, warn: 120 },
+        uk: { air: 60, danger: 180, warn: 210 },
+        eu: { air: 60, danger: 180, warn: 210 },
+        jp: { air: JP_RULE.sea_lead_days, danger: JP_RULE.safety_days, warn: Math.round(JP_RULE.safety_days * 1.5) }
+    };
+    function daysRule(region) { return DAYS_RULE[region] || DAYS_RULE.uk; }
+
     function getDaysBadge(daysStr, region, isHeavy = false) {
+        if (daysStr === undefined || daysStr === 'undefined') return `<span>-</span>`;
         if (daysStr === "여유") return `<span>${daysStr}</span>`;
         const days = parseInt(daysStr);
         if (isNaN(days)) return `<span>${daysStr}</span>`;
         if (days > 365) return `<span class="badge-frozen">⏸️ ${daysStr}일</span>`;
         const extra = isHeavy ? HEAVY_EXTRA_DAYS : 0;
-        if (region === 'us') {
-            if (days <= 45 + extra)  return `<span class="badge-air">✈️ ${daysStr}일</span>`;
-            if (days < 90 + extra)   return `<span class="badge-danger">🚨 ${daysStr}일</span>`;
-            if (days <= 120 + extra) return `<span class="badge-warning">⚠️ ${daysStr}일</span>`;
-        } else {
-            if (days <= 60 + extra)  return `<span class="badge-air">✈️ ${daysStr}일</span>`;
-            if (days < 180 + extra)  return `<span class="badge-danger">🚨 ${daysStr}일</span>`;
-            if (days <= 210 + extra) return `<span class="badge-warning">⚠️ ${daysStr}일</span>`;
+        const rule = daysRule(region);
+        if (days <= rule.air + extra) {
+            const late = region === 'jp' && days <= JP_RULE.air_lead_days;
+            const tip = late ? ` title="항공 리드타임(${JP_RULE.air_lead_days}일)보다 짧음 — 항공으로도 결품 가능"` : '';
+            return `<span class="badge-air"${tip}>✈️ ${daysStr}일${late ? '❗' : ''}</span>`;
         }
+        if (days < rule.danger + extra) return `<span class="badge-danger">🚨 ${daysStr}일</span>`;
+        if (days <= rule.warn + extra)  return `<span class="badge-warning">⚠️ ${daysStr}일</span>`;
         return `<span>${daysStr}일</span>`;
     }
 
     function isAirUrgent(row, region) {
         const daysStr = row[`${region}_days`];
-        if (daysStr === "여유") return false;
+        if (daysStr === undefined || daysStr === "여유") return false;
         const days = parseInt(daysStr);
         if (isNaN(days)) return false;
         const extra = row.is_heavy ? HEAVY_EXTRA_DAYS : 0;
-        if (region === 'us') return days <= 45 + extra;
-        return days <= 60 + extra;
+        return days <= daysRule(region).air + extra;
     }
 
     function isDanger(row, region) {
@@ -830,11 +855,11 @@
     function escapeHtml(s) { return String(s).replace(/'/g,"\\'").replace(/"/g,'&quot;'); }
 
     /* ══════════ 리뉴얼: 권역 선택 + 선택 권역 기준 층별화 재계산 ══════════ */
-    const V2_REGION_STYLE = { us: ['#1e3a8a', '#dbeafe'], uk: ['#92400e', '#fef3c7'], eu: ['#065f46', '#dcfce7'] };
+    const V2_REGION_STYLE = { us: ['#1e3a8a', '#dbeafe'], uk: ['#92400e', '#fef3c7'], eu: ['#065f46', '#dcfce7'], jp: ['#9d174d', '#fce7f3'] };
     const V2_REGIONS = (gradeMeta && gradeMeta.regions) ? gradeMeta.regions
         : [{ key: 'us', label: '미국', full: true }, { key: 'uk', label: '영국', full: true }, { key: 'eu', label: '유럽 연합', full: true }];
     const V2_REGION_KEYS = V2_REGIONS.map(r => r.key);
-    const GRADE_SRC_LABEL = { us: '수불부', uk: '수불부', eu: '판매파일' };
+    const GRADE_SRC_LABEL = { us: '수불부', uk: '수불부', eu: '판매파일', jp: '판매파일' };
     let selectedRegions = V2_REGION_KEYS.slice();
     try {
         const saved = JSON.parse(localStorage.getItem('v2_regions') || 'null');
@@ -1022,7 +1047,7 @@
         renderValueFooter('tfoot1', rawData);
         renderValueFooter('tfoot2', groupedData);
         // 화면에서 뺀 권역의 항공긴급 필터는 끄고 버튼도 숨김
-        ['1', '2'].forEach(t => ['us', 'uk', 'eu'].forEach(k => {
+        ['1', '2'].forEach(t => ['us', 'uk', 'eu', 'jp'].forEach(k => {
             const btn = document.getElementById(`f${t}-${k}`);
             if (!btn) return;
             const on = selectedRegions.includes(k);
@@ -1048,8 +1073,8 @@
     }
 
     const activeFilters = {
-        '1': { us:false, uk:false, eu:false },
-        '2': { us:false, uk:false, eu:false }
+        '1': { us:false, uk:false, eu:false, jp:false },
+        '2': { us:false, uk:false, eu:false, jp:false }
     };
 
     const plcFilters = {
@@ -1060,7 +1085,7 @@
     function toggleFilter(tabIdx, region) {
         activeFilters[tabIdx][region] = !activeFilters[tabIdx][region];
         const btn = document.getElementById(`f${tabIdx}-${region}`);
-        btn.classList.remove('on-us','on-uk','on-eu');
+        btn.classList.remove('on-us','on-uk','on-eu','on-jp');
         if (activeFilters[tabIdx][region]) btn.classList.add(`on-${region}`);
         applyFilters(tabIdx);
     }
@@ -1083,13 +1108,13 @@
         const keyword = document.getElementById(`searchInput${tabIdx}`).value.toLowerCase();
         const af = activeFilters[tabIdx];
         const pf = plcFilters[tabIdx];
-        const anyFilter = af.us || af.uk || af.eu;
+        const anyFilter = af.us || af.uk || af.eu || af.jp;
         const data = tabIdx==='1' ? rawData : groupedData;
         const tbody = document.getElementById(`tbody${tabIdx}`);
         const rows = Array.from(tbody.getElementsByTagName('tr'));
 
         function getRowGroup(row) {
-            const order = ['us','uk','eu'];
+            const order = ['us','uk','eu','jp'];
             for (let i=0; i<order.length; i++) {
                 const r = order[i];
                 if (!af[r]) continue;
@@ -1201,6 +1226,7 @@
         document.getElementById('modal-tab-us').classList.toggle('active', region==='us');
         document.getElementById('modal-tab-uk').classList.toggle('active', region==='uk');
         document.getElementById('modal-tab-eu').classList.toggle('active', region==='eu');
+        document.getElementById('modal-tab-jp').classList.toggle('active', region==='jp');
         renderWaterfall(region);
     }
 
@@ -1226,7 +1252,12 @@
     const BOOKING_RULE = {
         us: { airIdx: 6,  seaIdx: 13, airLabel: '6주', seaLabel: '13주' },
         uk: { airIdx: 13, seaIdx: 26, airLabel: '13주', seaLabel: '26주' },
-        eu: { airIdx: 13, seaIdx: 26, airLabel: '13주', seaLabel: '26주' }
+        eu: { airIdx: 13, seaIdx: 26, airLabel: '13주', seaLabel: '26주' },
+        // JP: 항공 = 해상 리드타임(20일) 안의 결품분, 해상 = 해상 리드타임 + 안전재고(20+30=50일) 안의 결품분
+        jp: (() => {
+            const a = Math.ceil(JP_RULE.sea_lead_days / 7), sIdx = Math.ceil((JP_RULE.sea_lead_days + JP_RULE.safety_days) / 7);
+            return { airIdx: a, seaIdx: sIdx, airLabel: `${a}주`, seaLabel: `${sIdx}주` };
+        })()
     };
 
     function calcBooking(rows, region) {
@@ -1249,7 +1280,7 @@
     /* ══════════════════════════════════════════
        부킹 관리 (항공/해상 PLT 산정 · 주차별)
     ══════════════════════════════════════════ */
-    const REGION_LABEL = { us: '🇺🇸 US', uk: '🇬🇧 UK', eu: '🇪🇺 EU' };
+    const REGION_LABEL = { us: '🇺🇸 US', uk: '🇬🇧 UK', eu: '🇪🇺 EU', jp: '🇯🇵 JP' };
     const BOOKING_WEEK_COUNT = 3;
 
     function daysSortValue(daysStr) {
@@ -1312,7 +1343,9 @@
     const INBOUND_ARRIVAL_RATE = 0.7; // 입고예정 중 그 주에 실제 들어온다고 보는 비율 (원본 엑셀 M=L×0.7)
     // 나머지 30%는 다음 주에 들어오는 것으로 이월 (원본 엑셀 O = L×0.3 + N×0.7)
 
-    const REGIONS = ['us', 'uk', 'eu'];
+    const REGIONS = ['us', 'uk', 'eu', 'jp'];
+    const LAST_R = REGIONS.length - 1;
+    const WEEK_COLS = 3 + REGIONS.length * 4;   // 재고 3열 + (항공필요·항공할당·해상필요·해상할당) × 권역 수
     const MODES = ['air', 'sea'];
     const MODE_LABEL = { air: '✈️ 항공', sea: '🚢 해상' };
 
@@ -1355,7 +1388,8 @@
             // 시작: 가용재고 − B2B + 이번주 입고×70%. 이후 매주: 그 주 입고×70% + 지난 주 입고 잔여분 30%.
             let krAvail = (row.kr_stock || 0) - (row.b2b_qty || 0) + inbound.base * INBOUND_ARRIVAL_RATE;
             let prevArrival = inbound.base;
-            const allocSoFar = { us: { air: 0, sea: 0 }, uk: { air: 0, sea: 0 }, eu: { air: 0, sea: 0 } };
+            const allocSoFar = {};
+            REGIONS.forEach(r => { allocSoFar[r] = { air: 0, sea: 0 }; });
             const weeks = [];
 
             for (let w = 0; w < BOOKING_WEEK_COUNT; w++) {
@@ -1403,10 +1437,11 @@
 
     function renderBookingSummary(weekLabels, items) {
         // totals[w][mode][region] = { need, alloc }
-        const totals = weekLabels.map(() => ({
-            air: { us: { need: 0, alloc: 0 }, uk: { need: 0, alloc: 0 }, eu: { need: 0, alloc: 0 } },
-            sea: { us: { need: 0, alloc: 0 }, uk: { need: 0, alloc: 0 }, eu: { need: 0, alloc: 0 } }
-        }));
+        const totals = weekLabels.map(() => {
+            const t = { air: {}, sea: {} };
+            REGIONS.forEach(r => { t.air[r] = { need: 0, alloc: 0 }; t.sea[r] = { need: 0, alloc: 0 }; });
+            return t;
+        });
         items.forEach(it => it.weeks.forEach((wk, wi) => {
             REGIONS.forEach(r => MODES.forEach(m => {
                 totals[wi][m][r].need += (wk.need[r][m] || 0);
@@ -1440,21 +1475,21 @@
             !search || it.code.toLowerCase().includes(search) || it.name.toLowerCase().includes(search)
         );
 
-        const regionThs = cls => REGIONS.map((r, i) => `<th${i === 2 ? ` class="${cls}"` : ''}>${r.toUpperCase()}</th>`).join('');
+        const regionThs = cls => REGIONS.map((r, i) => `<th${i === LAST_R ? ` class="${cls}"` : ''}>${r.toUpperCase()}</th>`).join('');
         document.getElementById('thead3').innerHTML = `
             <tr>
-                <th colspan="5" class="col-info region-boundary">품목 정보</th>
-                ${weekLabels.map(wl => `<th colspan="15" class="region-boundary" style="color:#1e3a8a;">${wl.label} (${wl.range})</th>`).join('')}
+                <th colspan="${2 + REGIONS.length}" class="col-info region-boundary">품목 정보</th>
+                ${weekLabels.map(wl => `<th colspan="${WEEK_COLS}" class="region-boundary" style="color:#1e3a8a;">${wl.label} (${wl.range})</th>`).join('')}
             </tr>
             <tr>
                 <th rowspan="2">품목코드</th><th rowspan="2">제품명</th>
-                <th rowspan="2">US회전</th><th rowspan="2">UK회전</th><th rowspan="2" class="region-boundary">EU회전</th>
+                ${REGIONS.map((r, i) => `<th rowspan="2"${i === LAST_R ? ' class="region-boundary"' : ''}>${r.toUpperCase()}회전</th>`).join('')}
                 ${weekLabels.map(() => `
                     <th colspan="3">재고 (한국)</th>
-                    <th colspan="3" style="color:#5b21b6;">✈️ 필요 PLT</th>
-                    <th colspan="3" style="color:#5b21b6; background:#f3effe;">✈️ 할당 PLT</th>
-                    <th colspan="3" style="color:#1d4ed8;">🚢 필요 PLT</th>
-                    <th colspan="3" class="region-boundary" style="color:#1d4ed8; background:#eff6ff;">🚢 할당 PLT</th>`).join('')}
+                    <th colspan="${REGIONS.length}" style="color:#5b21b6;">✈️ 필요 PLT</th>
+                    <th colspan="${REGIONS.length}" style="color:#5b21b6; background:#f3effe;">✈️ 할당 PLT</th>
+                    <th colspan="${REGIONS.length}" style="color:#1d4ed8;">🚢 필요 PLT</th>
+                    <th colspan="${REGIONS.length}" class="region-boundary" style="color:#1d4ed8; background:#eff6ff;">🚢 할당 PLT</th>`).join('')}
             </tr>
             <tr>
                 ${weekLabels.map(() => `
@@ -1471,9 +1506,7 @@
             <tr>
                 <td>${it.code}</td>
                 <td style="text-align:left;">${it.name}</td>
-                <td>${getDaysBadge(String(it.days.us), 'us', it.heavy)}</td>
-                <td>${getDaysBadge(String(it.days.uk), 'uk', it.heavy)}</td>
-                <td class="region-boundary">${getDaysBadge(String(it.days.eu), 'eu', it.heavy)}</td>
+                ${REGIONS.map((r, i) => `<td${i === LAST_R ? ' class="region-boundary"' : ''}>${getDaysBadge(String(it.days[r]), r, it.heavy)}</td>`).join('')}
                 ${it.weeks.map(w => `
                     <td>${w.incoming.toLocaleString()}</td>
                     <td>${Math.round(w.avail).toLocaleString()}</td>
@@ -1481,18 +1514,18 @@
                     ${REGIONS.map(r => needCell(w.need[r].air)).join('')}
                     ${REGIONS.map((r, i) => allocCell(w.alloc[r].air, 'air', false)).join('')}
                     ${REGIONS.map(r => needCell(w.need[r].sea)).join('')}
-                    ${REGIONS.map((r, i) => allocCell(w.alloc[r].sea, 'sea', i === 2)).join('')}`).join('')}
+                    ${REGIONS.map((r, i) => allocCell(w.alloc[r].sea, 'sea', i === LAST_R)).join('')}`).join('')}
             </tr>`).join('');
 
         document.getElementById('tfoot3').innerHTML = `
             <tr style="font-weight:700; background:#f8fafc;">
-                <td colspan="5" style="text-align:left; padding-left:15px;" class="region-boundary">합계 (PLT)</td>
+                <td colspan="${2 + REGIONS.length}" style="text-align:left; padding-left:15px;" class="region-boundary">합계 (PLT)</td>
                 ${weekLabels.map((wl, wi) => `
                     <td></td><td></td><td></td>
                     ${REGIONS.map(r => `<td>${totals[wi].air[r].need.toLocaleString()}</td>`).join('')}
                     ${REGIONS.map(r => `<td style="background:#f3effe; color:#5b21b6;">${totals[wi].air[r].alloc.toLocaleString()}</td>`).join('')}
                     ${REGIONS.map(r => `<td>${totals[wi].sea[r].need.toLocaleString()}</td>`).join('')}
-                    ${REGIONS.map((r, i) => `<td${i === 2 ? ' class="region-boundary"' : ''} style="background:#eff6ff; color:#1d4ed8;">${totals[wi].sea[r].alloc.toLocaleString()}</td>`).join('')}`).join('')}
+                    ${REGIONS.map((r, i) => `<td${i === LAST_R ? ' class="region-boundary"' : ''} style="background:#eff6ff; color:#1d4ed8;">${totals[wi].sea[r].alloc.toLocaleString()}</td>`).join('')}`).join('')}
             </tr>`;
 
         const warnEl = document.getElementById('booking-pallet-warning');
@@ -1712,7 +1745,8 @@
         const regions = [
             { key:'us', label:'🇺🇸 US', color:'#1e3a8a' },
             { key:'uk', label:'🇬🇧 UK', color:'#92400e' },
-            { key:'eu', label:'🇪🇺 EU', color:'#065f46' }
+            { key:'eu', label:'🇪🇺 EU', color:'#065f46' },
+            { key:'jp', label:'🇯🇵 JP', color:'#9d174d' }
         ];
 
         // 상단 요약: 권역별 28일 평균 vs 최근 3일 평균
