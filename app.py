@@ -1,3 +1,4 @@
+import copy
 import os
 import warnings
 import pandas as pd
@@ -94,7 +95,8 @@ def assign_region(warehouse_name):
         return 'us'
     elif '영국' in wh_str:
         return 'uk'
-    elif any(keyword in wh_str for keyword in ['독일', '네덜란드', '유럽', 'EU']):
+    # 스페인·이탈리아·프랑스 FBT 창고도 EU (2026-11-19 — 이전엔 '기타'로 빠져 EU 재고에서 누락)
+    elif any(keyword in wh_str for keyword in ['독일', '네덜란드', '스페인', '이탈리아', '프랑스', '유럽', 'EU']):
         return 'eu'
     return '기타'
 
@@ -141,7 +143,8 @@ def load_integrated_inventory(file_gen, file_fbt, file_fba):
             tmp = pd.DataFrame({
                 '창고': df_gen['창고'],
                 '품목코드': df_gen[find_sku_col(df_gen)].astype(str).str.strip().str.upper(),
-                '가용재고': df_gen['가용 재고 (개)'].apply(parse_int)
+                '가용재고': df_gen['가용 재고 (개)'].apply(parse_int),
+                '상품명': df_gen['상품명'] if '상품명' in df_gen.columns else ''
             })
             tmp = expand_multicode_rows(tmp)
             all_rows.append(tmp)
@@ -155,7 +158,8 @@ def load_integrated_inventory(file_gen, file_fbt, file_fba):
             tmp = pd.DataFrame({
                 '창고': df_fbt['창고'],
                 '품목코드': df_fbt[find_sku_col(df_fbt)].astype(str).str.strip().str.upper(),
-                '가용재고': df_fbt['가용 재고 (개)'].apply(parse_int)
+                '가용재고': df_fbt['가용 재고 (개)'].apply(parse_int),
+                '상품명': df_fbt['상품명'] if '상품명' in df_fbt.columns else ''
             })
             tmp = expand_multicode_rows(tmp)
             all_rows.append(tmp)
@@ -174,7 +178,8 @@ def load_integrated_inventory(file_gen, file_fbt, file_fba):
             tmp = pd.DataFrame({
                 '창고': df_fba[warehouse_col],
                 '품목코드': df_fba[find_sku_col(df_fba)].astype(str).str.strip().str.upper(),
-                '가용재고': df_fba['가용 재고 (개)'].apply(parse_int)
+                '가용재고': df_fba['가용 재고 (개)'].apply(parse_int),
+                '상품명': df_fba['상품명'] if '상품명' in df_fba.columns else ''
             })
             tmp = expand_multicode_rows(tmp)
             all_rows.append(tmp)
@@ -188,6 +193,8 @@ def load_integrated_inventory(file_gen, file_fbt, file_fba):
     df_total = pd.concat(all_rows, ignore_index=True)
     df_total = df_total.dropna(subset=['품목코드'])
     df_total['품목코드'] = df_total['품목코드'].astype(str).str.strip()
+    global _LAST_INV_ROWS
+    _LAST_INV_ROWS = df_total.copy()   # 리뉴얼(v2) 추가 권역 재고용 (US/UK/EU 필터 전 전체 창고)
     df_total['region'] = df_total['창고'].apply(assign_region)
     df_total = df_total[df_total['region'].isin(['us', 'uk', 'eu'])]
 
@@ -1161,6 +1168,607 @@ def build_heavy_codes(master_df):
 HEAVY_SAFETY_EXTRA_DAYS = 30  # 중량물 안전재고 가산 일수 (template.html의 항공 임계선 +30과 세트)
 
 
+# ─────────────────────────────────────────────────────────────
+# 리뉴얼(v2) 대시보드 전용: 층별화 등급(SA/A/B/C) + 제품 카테고리 (2026-11-19)
+#   - 계산 결과는 JSON 행에 필드로만 추가됨 → 기존 template.html은 이 필드를 쓰지 않으므로 화면 영향 없음
+#   - template_v2.html이 있으면 리뉴얼이 dashboard.html(정식), 기존 화면은 dashboard_legacy.html(로컬 비교용)
+# ─────────────────────────────────────────────────────────────
+GRADE_BANDS = [(40, 'SA'), (70, 'A'), (90, 'B'), (100, 'C')]  # 누적 비중 상한(%) → 등급
+
+
+def prev_full_months(n=3, today=None):
+    """오늘 기준 직전 n개 '마감된' 달 [(year, month), ...] (최근 달이 앞). 11/19 → 10월, 9월, 8월"""
+    today = today or datetime.now().date()
+    y, m = today.year, today.month
+    out = []
+    for _ in range(n):
+        m -= 1
+        if m == 0:
+            y, m = y - 1, 12
+        out.append((y, m))
+    return out
+
+
+def parse_monthly_sales_totals(file_path, months):
+    """판매 파일의 지정 월 시트('26년 10월' 형식)에서 일자별 소계를 합산해 코드별 월간 판매(출고)량 반환.
+    반환: ({품목코드: qty}, [읽은 시트명], [못 찾은 (y,m)])
+    일자별 컬럼 탐색은 대시보드 일판매와 같은 _find_daily_layout()을 재사용 (같은 원본·같은 숫자)."""
+    totals, used, missing = {}, [], []
+    if not file_path or not os.path.exists(file_path):
+        return totals, used, list(months)
+    try:
+        xls = pd.ExcelFile(file_path)
+    except Exception:
+        return totals, used, list(months)
+    sheet_by_month = {}
+    for s in xls.sheet_names:
+        mm = re.match(r'(\d{2})년\s*(\d{1,2})월$', str(s).strip())
+        if mm:
+            sheet_by_month[(2000 + int(mm.group(1)), int(mm.group(2)))] = s
+    for ym in months:
+        sheet = sheet_by_month.get(ym)
+        if not sheet:
+            missing.append(ym)
+            continue
+        try:
+            df_raw = pd.read_excel(file_path, sheet_name=sheet, header=None)
+        except Exception:
+            missing.append(ym)
+            continue
+        date_cols, code_row, code_col = _find_daily_layout(df_raw)
+        if not date_cols or code_col is None:
+            print(f"   > ⚠️ '{sheet}' 일자별 컬럼 탐색 실패 — 층별화 집계에서 제외")
+            missing.append(ym)
+            continue
+        # 시트에 다른 달 날짜 컬럼이 섞여 있어도 해당 월 날짜만 합산
+        date_cols = [(ci, d) for ci, d in date_cols if (d.year, d.month) == ym]
+        used.append(sheet)
+        for r in range(code_row + 1, len(df_raw)):
+            code = df_raw.iat[r, code_col]
+            if pd.isna(code):
+                continue
+            code = str(code).strip().upper()
+            if not code or code == '품목코드':
+                continue
+            for ci, _d in date_cols:
+                if ci < df_raw.shape[1]:
+                    q = parse_int(df_raw.iat[r, ci])
+                    if q:
+                        totals[code] = totals.get(code, 0) + q
+    return totals, used, missing
+
+
+def assign_grades(sales_by_key):
+    """판매량 내림차순 누적 비중으로 SA/A/B/C 등급 부여 (파레토/ABC 분석).
+    누적 비중(자기 포함) ≤40% SA, ≤70% A, ≤90% B, 나머지 C.
+    층별화 엑셀(어크로스 비 층별화_261110.xlsx)의 IF(누적<=40%,"SA",...) 수식과 동일 — 예외 규칙 없음.
+    판매 0인 품목은 비중 0% → C."""
+    total = sum(q for q in sales_by_key.values() if q > 0)
+    result = {}
+    cum = 0.0
+    for i, (key, q) in enumerate(sorted(sales_by_key.items(), key=lambda kv: -kv[1])):
+        share = (q / total * 100) if (total > 0 and q > 0) else 0.0
+        cum_after = cum + share
+        if q <= 0:
+            grade = 'C'
+        else:
+            grade = next((g for limit, g in GRADE_BANDS if cum_after <= limit + 1e-9), 'C')
+        result[key] = {'grade': grade, 'share': round(share, 2), 'cum': round(cum_after, 1), 'qty': int(q)}
+        cum = cum_after
+    return result
+
+
+BRAND_RULES = [('바버501', ['바버501']), ('메종드펜세', ['메종드펜세', '메종드 펜세']),
+               ('닥터멜락신', ['닥터멜락신', '닥터 멜락신', '멜락신'])]
+# 상품 유형 키워드 — 위에서부터 먼저 걸리는 규칙 채택 (구체적인 키워드를 앞에)
+PRODUCT_TYPE_RULES = [
+    ('세트', ['세트', '기획', 'GWP', '듀오']),
+    ('부자재', ['쇼핑백', '샘플', '파우치']),
+    ('방향제', ['프레셔너']),
+    ('헤어', ['샴푸', '클리닉', '트리트먼트', '헤어']),
+    ('쉐이빙', ['쉐이빙', '왁싱']),
+    ('이너케어', ['청결제', '페미닌', '인티밋']),
+    ('선케어', ['선스크린', '선세럼', '선크림', '썬', '선스틱']),
+    ('패드', ['패드']),
+    ('마스크/패치', ['마스크', '하이드로겔', '패치', '아이백', '코팩']),
+    ('클렌저', ['클렌저', '클렌징', '클렌져', '폼']),
+    ('립', ['립']),
+    ('바디', ['바디']),
+    ('아이크림', ['아이크림', '아이 크림']),
+    ('토너', ['토너']),
+    ('미스트', ['미스트', '스프레이']),
+    ('앰플', ['앰플']),
+    ('세럼', ['세럼', '에센스']),
+    ('밤', ['밤']),
+    ('크림', ['크림', '젤']),
+    ('로션/올인원', ['올인원', '로션', '모이스처', '부스터']),
+    ('디바이스', ['디바이스', '브러쉬', '소닉샷']),
+]
+
+
+def derive_brand(name):
+    s = str(name or '')
+    for brand, kws in BRAND_RULES:
+        if any(k in s for k in kws):
+            return brand
+    return '기타'
+
+
+def derive_product_type(name):
+    s = str(name or '')
+    for ptype, kws in PRODUCT_TYPE_RULES:
+        if any(k in s for k in kws):
+            return ptype
+    return '기타'
+
+
+# 제품명 자동분류 유형 → 구매팀 카테고리 파일의 유형 체계 (파일에 없는 코드 표기 통일용)
+AUTO_TYPE_TO_FILE_TYPE = {
+    '크림': '크림/아이크림', '아이크림': '크림/아이크림', '밤': '크림/아이크림',
+    '세럼': '세럼/앰플', '앰플': '세럼/앰플',
+    '토너': '스킨/토너', '미스트': '스킨/토너',
+    '패드': '마스크/팩/패드/패치', '마스크/패치': '마스크/팩/패드/패치',
+    '헤어': '헤어/바디', '바디': '헤어/바디', '쉐이빙': '헤어/바디', '이너케어': '헤어/바디',
+    '선케어': '자외선차단제', '립': '립메이크업', '방향제': '퍼퓸/방향', '세트': 'GWP',
+}
+
+
+def load_category_file(folder=None):
+    """구매팀 카테고리 정리 엑셀(`카테고리 정리*.xlsx`, mtime 최신)에서 품목코드 → {brand, line, ptype}.
+    헤더에 '브랜드명'·'품목코드'·'유형'이 있는 시트를 사용. '대표 코드'도 같은 카테고리로 등록(통합 제품명 행 조회용).
+    반환: ({코드: {...}}, 파일명 또는 None)"""
+    folder = folder or os.path.dirname(os.path.abspath(__file__))
+    files = [f for f in glob.glob(os.path.join(folder, '카테고리 정리*.xlsx')) if not os.path.basename(f).startswith('~$')]
+    if not files:
+        return {}, None
+    path = max(files, key=os.path.getmtime)
+    try:
+        xls = pd.ExcelFile(path)
+    except Exception as e:
+        print(f"   > ⚠️ 카테고리 파일 읽기 실패({os.path.basename(path)}): {e}")
+        return {}, None
+    for sn in xls.sheet_names:
+        df = pd.read_excel(xls, sheet_name=sn, header=None, nrows=None)
+        if df.empty:
+            continue
+        head = [str(v).strip() if pd.notna(v) else '' for v in df.iloc[0].tolist()]
+        if not all(h in head for h in ('브랜드명', '품목코드', '유형')):
+            continue
+        ci = {h: head.index(h) for h in ('브랜드명', '품목코드', '유형')}
+        line_col = head.index('상품라인') if '상품라인' in head else None
+        rep_col = head.index('대표 코드') if '대표 코드' in head else None
+
+        def val(row, i):
+            if i is None:
+                return ''
+            v = row[i]
+            v = '' if pd.isna(v) else re.sub(r'\s+', ' ', str(v)).strip()
+            return '' if v.lower() == 'nan' else v
+        out, reps = {}, {}
+        for row in df.iloc[1:].itertuples(index=False):
+            row = list(row)
+            info = {'brand': val(row, ci['브랜드명']), 'line': val(row, line_col), 'ptype': val(row, ci['유형'])}
+            for c in val(row, ci['품목코드']).split(','):
+                c = c.strip().upper()
+                if c:
+                    out.setdefault(c, info)
+            rc = val(row, rep_col).upper()
+            if rc:
+                reps.setdefault(rc, info)
+        for c, info in reps.items():
+            out.setdefault(c, info)
+        print(f"   > 카테고리 파일: {os.path.basename(path)} [{sn}] {len(out)}개 코드")
+        return out, os.path.basename(path)
+    print(f"   > ⚠️ 카테고리 파일에서 '브랜드명/품목코드/유형' 헤더 시트를 못 찾음: {os.path.basename(path)}")
+    return {}, None
+
+
+def build_category_lookup(master_df):
+    """마스터 계정에 '브랜드명'/'상품 유형' 컬럼이 있으면 그 값을 우선 사용 (수기 관리),
+    없거나 빈칸이면 제품명 키워드로 자동 분류. 반환: ({품목코드(upper): (브랜드, 상품유형)}, 브랜드컬럼有, 유형컬럼有)"""
+    lookup = {}
+    if master_df is None or '품목코드' not in master_df.columns:
+        return lookup, False, False
+    brand_col = next((c for c in master_df.columns if str(c).strip() in ('브랜드명', '브랜드')), None)
+    type_col = next((c for c in master_df.columns if str(c).replace(' ', '') in ('상품유형', '제품유형')), None)
+    for _, row in master_df.dropna(subset=['품목코드']).iterrows():
+        name = row.get('제품명', '')
+        b = str(row.get(brand_col, '') or '').strip() if brand_col else ''
+        t = str(row.get(type_col, '') or '').strip() if type_col else ''
+        if b.lower() == 'nan':
+            b = ''
+        if t.lower() == 'nan':
+            t = ''
+        val = (b or derive_brand(name), t or derive_product_type(name))
+        for c in str(row['품목코드']).split(','):
+            if c.strip():
+                lookup.setdefault(c.strip().upper(), val)
+    return lookup, brand_col is not None, type_col is not None
+
+
+# 리뉴얼(v2) 권역 정의 — 순서 = 화면 표시 순서
+#   full=True : 재고·이동중·일판매·안전재고·회전일 전체 블록 (기존 US/UK/EU)
+#   full=False: 재고만 (판매/출고 실적 데이터가 아직 없는 권역 — 2026-11-19 사용자 결정 "재고만 우선 표시")
+V2_REGIONS = [
+    ('us', '미국', True), ('uk', '영국', True), ('eu', '유럽 연합', True),
+    ('jp', '일본', False), ('cn', '중국', False), ('krb2b', '한국 B2B', False), ('hk', '홍콩', False),
+    ('tw', '대만', False), ('sg', '싱가포르', False), ('ca', '캐나다', False), ('au', '호주', False),
+    ('mx', '멕시코', False),
+]
+GRADE_REGIONS = ['us', 'uk', 'eu']   # 현재 출고/판매 수량이 있는 권역 (나머지는 0으로 등급 계산)
+# 일반/FBA/FBT 재고 파일의 창고명 → 추가 권역 (부분 문자열 매칭, 위에서부터 먼저 걸리는 것)
+EXTRA_REGION_WAREHOUSE_KEYWORDS = [
+    ('krb2b', ['국내']), ('jp', ['일본']), ('cn', ['중국']), ('hk', ['홍콩']), ('tw', ['대만']),
+    ('sg', ['싱가포르']), ('ca', ['캐나다']), ('au', ['호주']), ('mx', ['멕시코']),
+]
+_LAST_INV_ROWS = None   # load_integrated_inventory가 읽은 전 창고 행 (추가 권역 재고 집계용)
+
+
+def assign_extra_region(warehouse_name):
+    s = str(warehouse_name)
+    for region, kws in EXTRA_REGION_WAREHOUSE_KEYWORDS:
+        if any(k in s for k in kws):
+            return region
+    return None
+
+
+def build_extra_region_stock():
+    """추가 권역(JP/CN/KR B2B/HK/TW/SG/CA/AU/MX) 코드별 창고 가용재고.
+    KR B2B = 국내 창고 전체 합계 (KCTC·콜로세움·쿠팡·리브·품고·AGCA — 2026-11-19 사용자 결정).
+    반환: ({품목코드: {region: qty}}, {region: [창고명...]})"""
+    stock, warehouses = {}, {}
+    df = _LAST_INV_ROWS
+    if df is None or df.empty:
+        return stock, warehouses
+    for _, row in df.iterrows():
+        region = assign_extra_region(row['창고'])
+        if not region:
+            continue
+        code = str(row['품목코드']).strip().upper()
+        if not code or code == 'NAN':
+            continue
+        warehouses.setdefault(region, set()).add(str(row['창고']))
+        d = stock.setdefault(code, {})
+        d[region] = d.get(region, 0) + int(row['가용재고'] or 0)
+    return stock, {r: sorted(v) for r, v in warehouses.items()}
+
+
+# ── 어크로스 비 수불부 (US/UK 출고량 원본) ──
+LEDGER_REGION_KEYWORDS = [('us', ['미국']), ('uk', ['영국']), ('ca', ['캐나다'])]
+
+
+def _ledger_year_month(path):
+    """수불부 파일의 (연도 또는 None, 월). 연도 우선순위: 파일명 '26년 10월'/'2026년 10월'/'2026-10' → 상위 폴더명의 4자리 연도.
+    연도를 못 찾으면 None (대상 3개월 중 같은 월로 매칭하되, 연도가 명시된 파일이 있으면 그쪽이 우선)."""
+    name = os.path.basename(path)
+    mm = re.search(r'(\d{2,4})\s*년\s*(\d{1,2})\s*월', name) or re.search(r'(20\d{2})[.\-_](\d{1,2})(?!\d)', name)
+    if mm:
+        y = int(mm.group(1))
+        return (y + 2000 if y < 100 else y), int(mm.group(2))
+    mm = re.search(r'(\d{1,2})\s*월', name)
+    if not mm:
+        return None, None
+    folder_year = re.search(r'(20\d{2})', os.path.basename(os.path.dirname(path)))
+    return (int(folder_year.group(1)) if folder_year else None), int(mm.group(1))
+
+
+def parse_ledger_outbound(path):
+    """수불부 1개 파일 → {품목코드: 출고량}. 출고량 = '출고 재고(EA)' 아래 '총합(EA)' − 'fake(seeding)'.
+    같은 SKU가 여러 행이면 합산 (층별화 엑셀의 '중복항목 취합' 단계와 동일)."""
+    df = pd.read_excel(path, header=None)
+    hr = None
+    for r in range(min(10, len(df))):
+        vals = [str(v).strip() for v in df.iloc[r].tolist()]
+        if 'SKU' in vals and any('출고' in v for v in vals):
+            hr = r
+            break
+    if hr is None:
+        raise ValueError("헤더('SKU' + '출고 재고') 행을 찾지 못함")
+    head = [str(v).strip() for v in df.iloc[hr].tolist()]
+    sub = [str(v).strip().lower() for v in df.iloc[hr + 1].tolist()]
+    code_col = head.index('SKU')
+    out_col = next(i for i, v in enumerate(head) if '출고' in v)
+    total_col = next((i for i in range(out_col, len(sub)) if '총합' in sub[i]), out_col)
+    fake_col = next((i for i in range(out_col, len(sub)) if 'fake' in sub[i] or 'seeding' in sub[i]), None)
+    result = {}
+    for r in range(hr + 2, len(df)):
+        code = df.iat[r, code_col]
+        if pd.isna(code):
+            continue
+        code = str(code).strip().upper()
+        if not code or code == 'SKU':
+            continue
+        q = parse_int(df.iat[r, total_col]) - (parse_int(df.iat[r, fake_col]) if fake_col is not None else 0)
+        result[code] = result.get(code, 0) + q
+    return result
+
+
+def load_ledger_outbound(months, folder=None):
+    """수불부/ 폴더(하위 폴더 포함)에서 직전 3개월(months)에 해당하는 권역×월 수불부만 골라 출고량 로드.
+    같은 권역·월 파일이 여러 개면 연도가 명시된 파일 우선, 그다음 mtime 최신 1개. 3개월 밖 파일은 무시(보관용).
+    반환: ({(region, (y,m)): {code: qty}}, {(region,(y,m)): 파일명})"""
+    folder = folder or os.path.join(os.path.dirname(os.path.abspath(__file__)), '수불부')
+    data, files = {}, {}
+    if not os.path.isdir(folder):
+        return data, files
+    # 수불부는 계속 쌓아두는 폴더(월별 출고 추이용) — 하위 폴더(예: 수불부6\)도 읽고, 대상 3개월 파일만 골라 씀
+    picked = {}   # (region, (y,m)) → (연도명시 여부, mtime, 경로)
+    for f in glob.glob(os.path.join(folder, '**', '*.xls*'), recursive=True):
+        name = os.path.basename(f)
+        if name.startswith('~$'):
+            continue
+        region = next((r for r, kws in LEDGER_REGION_KEYWORDS if any(k in name for k in kws)), None)
+        y, mo = _ledger_year_month(f)
+        if not region or not mo:
+            continue
+        if y is not None:
+            if (y, mo) not in months:
+                continue
+            ym = (y, mo)
+        else:
+            ym = next(((yy, m) for yy, m in months if m == mo), None)
+            if not ym:
+                continue
+        rank = (y is not None, os.path.getmtime(f))
+        key = (region, ym)
+        if key not in picked or rank > picked[key][:2]:
+            picked[key] = (rank[0], rank[1], f)
+    picked = {k: v[2] for k, v in picked.items()}
+    for key, f in picked.items():
+        try:
+            data[key] = parse_ledger_outbound(f)
+            files[key] = os.path.basename(f)
+        except Exception as e:
+            print(f"   > ⚠️ 수불부 파싱 실패({os.path.basename(f)}): {e} — 이 달은 판매 파일로 대체")
+    return data, files
+
+
+def build_unregistered_rows(df):
+    """마스터 미등록(제품명 없음) + US/UK/EU 재고 있는 코드의 JSON 행. 이름은 재고 파일 상품명, 그룹은 코드 자신."""
+    if df is None or df.empty:
+        return []
+    names = {}
+    inv = _LAST_INV_ROWS
+    if inv is not None and '상품명' in inv.columns:
+        for code, nm in zip(inv['품목코드'], inv['상품명']):
+            c = str(code).strip().upper()
+            nm = str(nm or '').strip()
+            if nm and nm.lower() != 'nan' and c not in names:
+                names[c] = nm
+    df = df.copy()
+    df['제품명'] = df['품목코드'].apply(lambda c: names.get(str(c).strip().upper()) or str(c))
+    df['통합 제품명'] = df['품목코드'].astype(str).str.strip()
+    df['상품라인'] = '기타(미등록)'
+    rows = build_json_rows(df)
+    for r in rows:
+        r['unregistered'] = True
+    return rows
+
+
+def _zero_row_template(rows):
+    """재고·판매가 전부 0인 기존 행을 골라 행 양식으로 사용 (회전일 '여유' 등 표기 규칙을 build_json_rows와 동일하게)."""
+    def is_zero(r):
+        return all(not r.get(f'{k}_{f}') for k in ('us', 'uk', 'eu') for f in ('total', 'sales'))
+    tpl = next((r for r in rows if is_zero(r)), rows[0] if rows else None)
+    if tpl is None:
+        return None
+    out = {}
+    for k, v in tpl.items():
+        if isinstance(v, bool):
+            out[k] = False
+        elif isinstance(v, (int, float)):
+            out[k] = 0
+        elif isinstance(v, list):
+            out[k] = []
+        elif isinstance(v, dict):
+            out[k] = {}
+        elif k.endswith('_days'):
+            out[k] = v          # 재고·판매 0 행의 회전일 표기 그대로
+        else:
+            out[k] = '' if v is not None else None
+    return out
+
+
+def _inject_extra_region_rows(json_tab1, json_tab2, master_df, extra_stock, group_extra, extra_keys, excluded_codes):
+    """새 권역 재고가 있는데 대시보드 행이 없는 코드(tab1)·통합 제품명(tab2)을 0 행으로 추가.
+    마스터 계정에 등록된 코드만 (제품명·그룹을 알 수 있어야 함). 반환: (tab1 추가 수, tab2 추가 수)"""
+    if master_df is None or '품목코드' not in master_df.columns:
+        return 0, 0
+    info = {}
+    for _, r in master_df.dropna(subset=['품목코드']).iterrows():
+        for c in str(r['품목코드']).split(','):
+            c = c.strip().upper()
+            if c and c not in info:
+                g = str(r.get('통합 제품명', '') or '').strip()
+                info[c] = {'name': str(r.get('제품명', '') or '').strip(),
+                           'group': '' if g.lower() == 'nan' else g,
+                           'line': str(r.get('상품라인', '') or '').strip()}
+    added1 = added2 = 0
+    tpl1, tpl2 = _zero_row_template(json_tab1), _zero_row_template(json_tab2)
+    have1 = {str(r['code']).strip().upper() for r in json_tab1}
+    if tpl1:
+        for c in sorted(extra_stock):
+            if c in have1 or c in excluded_codes or c not in info:
+                continue
+            if not any(extra_stock[c].get(k, 0) > 0 for k in extra_keys):
+                continue
+            row = dict(tpl1)
+            row.update({'code': c, 'name': info[c]['name'] or c, '통합 제품명': info[c]['group'],
+                        '상품라인': '' if info[c]['line'].lower() == 'nan' else info[c]['line'],
+                        'plc_status': '정보없음'})
+            json_tab1.append(row)
+            added1 += 1
+    have2 = {str(r.get('통합 제품명', '')) for r in json_tab2}
+    if tpl2:
+        for g in sorted(group_extra):
+            if g in have2 or not any(group_extra[g].get(k, 0) > 0 for k in extra_keys):
+                continue
+            rep = info.get(g.upper()) or next((v for v in info.values() if v['group'] == g), None)
+            if not rep:
+                continue
+            row = dict(tpl2)
+            row.update({'code': g, 'name': rep['name'] or g, '통합 제품명': g,
+                        '상품라인': '' if rep['line'].lower() == 'nan' else rep['line'], 'plc_status': '정보없음'})
+            json_tab2.append(row)
+            added2 += 1
+    return added1, added2
+
+
+def enrich_v2_fields(json_tab1, json_tab2, master_df, sales_files, excluded_codes, unreg_rows=None):
+    """층별화 등급 + 카테고리 + 추가 권역 재고를 tab1(개별 코드)/tab2(통합 제품명) JSON 행에 부착하고 메타 반환.
+    등급 수량: US/UK = 어크로스 비 수불부 출고량(없는 달은 판매 파일), EU = 판매 파일 (2026-11-19 사용자 결정).
+    화면에서 권역을 고르면 grade_universe로 브라우저가 등급을 다시 계산함."""
+    months = prev_full_months(3)
+    ledger, ledger_files = load_ledger_outbound(months)
+    region_qty = {r: {} for r in GRADE_REGIONS}
+    sources = {}
+    missing_all = {}
+    for region in GRADE_REGIONS:
+        path = sales_files.get(region)
+        sales_totals_by_month = {}
+        need_sales = [ym for ym in months if (region, ym) not in ledger]
+        if need_sales:
+            for ym in need_sales:
+                t, _used, miss = parse_monthly_sales_totals(path, [ym])
+                sales_totals_by_month[ym] = t
+                if miss:
+                    missing_all.setdefault(region, []).append(f"{ym[0]}-{ym[1]:02d}")
+        src = []
+        for ym in sorted(months):
+            label = f"{ym[1]}월"
+            if (region, ym) in ledger:
+                totals = ledger[(region, ym)]
+                src.append(f"{label} 수불부")
+            else:
+                totals = sales_totals_by_month.get(ym, {})
+                src.append(f"{label} 판매파일")
+            for c, q in totals.items():
+                if c not in excluded_codes and q:
+                    region_qty[region][c] = region_qty[region].get(c, 0) + q
+        sources[region] = src
+
+    # 마스터 미등록이지만 US/UK/EU 재고가 있는 코드 → 개별코드·통합제품명 양쪽에 자기 코드 이름의 행으로 추가
+    for r in (unreg_rows or []):
+        json_tab1.append(dict(r))
+        json_tab2.append(dict(r))
+    if unreg_rows:
+        print(f"   > 마스터 미등록 + US/UK/EU 재고 있는 코드 {len(unreg_rows)}개 행 추가")
+
+    # tab1 모수: 출고/판매가 있는 전 코드 + 대시보드 표시 코드
+    all_codes = set()
+    for r in GRADE_REGIONS:
+        all_codes |= set(region_qty[r])
+    for row in json_tab1:
+        all_codes.add(str(row['code']).strip().upper())
+    uni1 = {c: [region_qty[r].get(c, 0) for r in GRADE_REGIONS] for c in sorted(all_codes)}
+
+    # tab2: 마스터의 코드→통합 제품명 매핑으로 그룹 합산 (재고 없는 코드의 판매도 포함 — build_group_fcst와 같은 방식)
+    code2group = {}
+    if master_df is not None and '통합 제품명' in master_df.columns:
+        for _, r in master_df.dropna(subset=['품목코드']).iterrows():
+            g = str(r.get('통합 제품명', '') or '').strip()
+            if g and g.lower() != 'nan':
+                for c in str(r['품목코드']).split(','):
+                    if c.strip():
+                        code2group.setdefault(c.strip().upper(), g)
+    uni2 = {}
+    for c, vec in uni1.items():
+        g = code2group.get(c, c)   # 마스터 미등록 코드는 자기 코드가 곧 그룹 (미등록 행의 '통합 제품명'=코드)
+        acc = uni2.setdefault(g, [0] * len(GRADE_REGIONS))
+        for i, q in enumerate(vec):
+            acc[i] += q
+    for row in json_tab2:
+        uni2.setdefault(str(row.get('통합 제품명', '')), [0] * len(GRADE_REGIONS))
+
+    grades1 = assign_grades({k: sum(v) for k, v in uni1.items()})
+    grades2 = assign_grades({k: sum(v) for k, v in uni2.items()})
+    cat_lookup, has_brand_col, has_type_col = build_category_lookup(master_df)
+    cat_file, cat_file_name = load_category_file()
+    group_codes = {}
+    for c, g in code2group.items():
+        group_codes.setdefault(g, []).append(c)
+    cat_miss = set()
+
+    def apply_cat(row, codes):
+        """브랜드·상품라인·상품 유형: 카테고리 정리 엑셀(구매팀) 우선 → 마스터 컬럼 → 제품명 자동분류."""
+        info = next((cat_file[c] for c in codes if c in cat_file), None)
+        if info:
+            row['brand'] = info['brand'] or derive_brand(row['name'])
+            row['ptype'] = info['ptype'] or derive_product_type(row['name'])
+            if info['line']:
+                row['상품라인'] = info['line']
+            return
+        if cat_file:
+            cat_miss.add(codes[0])
+        b, t = cat_lookup.get(codes[0]) or (derive_brand(row['name']), derive_product_type(row['name']))
+        if cat_file:   # 파일에 없는 코드도 파일과 같은 유형 체계로 표기
+            t = AUTO_TYPE_TO_FILE_TYPE.get(t, t)
+        row['brand'], row['ptype'] = b, t
+
+    # 추가 권역 재고 (tab2는 마스터 매핑으로 그룹 합산)
+    extra_stock, extra_wh = build_extra_region_stock()
+    extra_keys = [r for r, _l, full in V2_REGIONS if not full]
+    group_extra = {}
+    for c, d in extra_stock.items():
+        g = code2group.get(c)
+        if g:
+            acc = group_extra.setdefault(g, {})
+            for r, q in d.items():
+                acc[r] = acc.get(r, 0) + q
+
+    # 새 권역(JP·KR B2B·HK…)에만 재고가 있는 코드/그룹도 행으로 표시 (판매·출고 없으면 재고 수량만 보임 — 2026-11-19)
+    added1, added2 = _inject_extra_region_rows(json_tab1, json_tab2, master_df, extra_stock, group_extra,
+                                               extra_keys, excluded_codes)
+    print(f"   > 새 권역 재고만 있는 행 추가: 개별코드 {added1}개 / 통합제품명 {added2}개")
+
+    empty = {'grade': 'C', 'share': 0, 'cum': 100, 'qty': 0}
+    for row in json_tab1:
+        key = str(row['code']).strip().upper()
+        g = grades1.get(key, empty)
+        row['grade'], row['grade_share'], row['grade_cum'], row['sales_3m'] = g['grade'], g['share'], g['cum'], g['qty']
+        apply_cat(row, [key])
+        es = extra_stock.get(key, {})
+        for r in extra_keys:
+            row[f'{r}_stock'] = int(es.get(r, 0))
+    for row in json_tab2:
+        gname = str(row.get('통합 제품명', ''))
+        g = grades2.get(gname, empty)
+        row['grade'], row['grade_share'], row['grade_cum'], row['sales_3m'] = g['grade'], g['share'], g['cum'], g['qty']
+        rcode = str(row['code']).strip().upper()
+        apply_cat(row, [rcode, gname.strip().upper()] + group_codes.get(gname, []))
+        es = group_extra.get(gname) or extra_stock.get(str(row['code']).strip().upper(), {})
+        for r in extra_keys:
+            row[f'{r}_stock'] = int(es.get(r, 0))
+
+    def count(rows):
+        cnt = {'SA': 0, 'A': 0, 'B': 0, 'C': 0}
+        for r in rows:
+            cnt[r['grade']] += 1
+        return cnt
+
+    return {
+        "months": [f"{y}-{m:02d}" for y, m in sorted(months)],
+        "total_qty": int(sum(sum(v) for v in uni1.values())),
+        "region_totals": {r: int(sum(region_qty[r].values())) for r in GRADE_REGIONS},
+        "sources": sources,
+        "ledger_files": {f"{r}-{y}-{m:02d}": n for (r, (y, m)), n in ledger_files.items()},
+        "months_missing": missing_all,
+        "bands": [{"grade": g, "upto": u} for u, g in GRADE_BANDS],
+        "count_tab1": count(json_tab1),
+        "count_tab2": count(json_tab2),
+        "brand_source": (f"{cat_file_name} 우선" if cat_file_name else "") +
+                        (" → 마스터 '브랜드명'" if has_brand_col else "") + " → 제품명 자동분류",
+        "type_source": (f"{cat_file_name} 우선 (없는 코드 {len(cat_miss)}개는 자동분류)" if cat_file_name else
+                        ("마스터 '상품 유형' 컬럼 우선, 빈칸은 제품명 자동분류" if has_type_col else "제품명 자동분류")),
+        "category_missing": sorted(cat_miss),
+        "regions": [{"key": r, "label": l, "full": full} for r, l, full in V2_REGIONS],
+        "grade_regions": GRADE_REGIONS,
+        "extra_warehouses": extra_wh,
+        "universe_tab1": uni1,
+        "universe_tab2": uni2,
+    }
+
+
 def build_json_rows(df):
     def calc_days(total, sales):
         if sales <= 0:
@@ -1422,6 +2030,9 @@ def run_dashboard_generator():
         merged['상품라인']   = '기타(미등록)'
         merged['통합 제품명'] = '미등록'
 
+    # 리뉴얼(v2): 마스터 미등록이라 이름이 없어도 US/UK/EU 재고(이동중 포함)가 있으면 표시하기 위해 따로 보관 (2026-11-19)
+    _has_stock = sum(merged[f'{r}_{k}'] for r in ['us', 'uk', 'eu'] for k in ['stock', 'air', 'sea']) > 0
+    unregistered_df = merged[(merged['제품명'].str.strip() == "") & _has_stock].copy()
     merged = merged[merged['제품명'].str.strip() != ""]
 
     print("🔄 [7/7] JSON 생성 및 HTML 발행 중...")
@@ -1582,6 +2193,32 @@ def run_dashboard_generator():
 
     json_tab2 = build_json_rows(tab2.copy())
 
+    # 리뉴얼(v2)용 층별화 등급 + 카테고리 — 실패해도 기존 대시보드 빌드는 계속
+    grade_meta = {}
+    json_tab1_v2, json_tab2_v2 = json_tab1, json_tab2
+    if os.path.exists("template_v2.html"):
+        print("🔄 [7.5/7] (리뉴얼) 층별화 등급·카테고리 계산 중 (직전 3개월 판매)...")
+        try:
+            # v2는 행을 추가(새 권역 재고만 있는 코드)하므로 복사본 사용 — 기존 대시보드·슬랙·dashboard_data.json은 원본 그대로
+            json_tab1_v2, json_tab2_v2 = copy.deepcopy(json_tab1), copy.deepcopy(json_tab2)
+            unreg_rows = build_unregistered_rows(unregistered_df)
+            grade_meta = enrich_v2_fields(
+                json_tab1_v2, json_tab2_v2, master_df,
+                {'us': excel_us_sales, 'uk': excel_uk_sales, 'eu': excel_eu_sales},
+                excluded_codes, unreg_rows=unreg_rows)
+            print(f"   > 기간 {grade_meta['months'][0]} ~ {grade_meta['months'][-1]}, "
+                  f"전제품 판매 {grade_meta['total_qty']:,}개 | 개별코드 {grade_meta['count_tab1']} | 통합제품명 {grade_meta['count_tab2']}")
+            if grade_meta.get('category_missing'):
+                miss = grade_meta['category_missing']
+                print(f"   > ℹ️ 카테고리 파일에 없는 코드 {len(miss)}개 → 자동분류: {', '.join(miss[:15])}{' 외' if len(miss) > 15 else ''}")
+            for r, src in grade_meta['sources'].items():
+                print(f"   > {r.upper()} 층별화 수량: {', '.join(src)} (합계 {grade_meta['region_totals'][r]:,})")
+            for r, miss in grade_meta['months_missing'].items():
+                if miss:
+                    print(f"   > ⚠️ {r.upper()} 판매 파일에 {', '.join(miss)} 시트가 없어 층별화 합계에서 빠짐")
+        except Exception as e:
+            print(f"   > ⚠️ 층별화 계산 실패(기존 대시보드에는 영향 없음): {e}")
+
     # 워터폴 데이터 (현지 ETA)
     waterfall_map = {}
     if '통합 제품명' in merged.columns:
@@ -1661,59 +2298,54 @@ def run_dashboard_generator():
         "b2b_matched_count": len(b2b_map)
     }
 
-    if os.path.exists(template_path):
-        with open(template_path, 'r', encoding='utf-8') as f:
-            html_content = f.read()
-    else:
+    if not os.path.exists(template_path):
         print("❌ template.html 파일이 없습니다.")
         return
 
-    html_content = html_content.replace(
-        "__DATA_FROM_PYTHON__",
-        json.dumps(json_tab1, ensure_ascii=False)
-    )
-    html_content = html_content.replace(
-        "__GROUPED_DATA_FROM_PYTHON__",
-        json.dumps(json_tab2, ensure_ascii=False)
-    )
-    html_content = html_content.replace(
-        "__WATERFALL_DATA_FROM_PYTHON__",
-        json.dumps(waterfall_map, ensure_ascii=False)
-    )
-    html_content = html_content.replace(
-        "__INBOUND_DATA_FROM_PYTHON__",
-        json.dumps(inbound_map, ensure_ascii=False)
-    )
-    # 부킹 관리용: SKU(개별 코드) 단위 국내 입고 예정 (그룹 단위 inbound_map을 쓰면 그룹 내 코드마다 중복 계산됨)
-    html_content = html_content.replace(
-        "__INBOUND_SKU_DATA_FROM_PYTHON__",
-        json.dumps(domestic_inbound, ensure_ascii=False)
-    )
-    html_content = html_content.replace(
-        "__LAST_UPDATED_FROM_PYTHON__",
-        datetime.now().strftime("%Y-%m-%d %H:%M")
-    )
-    html_content = html_content.replace(
-        "__COST_META_FROM_PYTHON__",
-        json.dumps(cost_meta, ensure_ascii=False)
-    )
-    html_content = html_content.replace(
-        "__DAILY_SALES_FROM_PYTHON__",
-        json.dumps(daily_sales_map, ensure_ascii=False)
-    )
-    html_content = html_content.replace(
-        "__PALLET_META_FROM_PYTHON__",
-        json.dumps(pallet_meta, ensure_ascii=False)
-    )
-    # 스냅샷 동결 저장 + 최근 30일 델타 비교 이력 임베드
+    # 스냅샷 동결 저장 + 최근 30일 델타 비교 이력 (기존·리뉴얼 대시보드 공통, 1회만 저장)
     snapshot_history = update_snapshots(json_tab1, json_tab2)
-    html_content = html_content.replace(
-        "__SNAPSHOT_HISTORY_FROM_PYTHON__",
-        json.dumps(snapshot_history, ensure_ascii=False)
-    )
 
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.write(html_content)
+    # 플레이스홀더 → 주입값. 기존(template.html)·리뉴얼(template_v2.html)이 같은 데이터를 쓴다.
+    # (템플릿에 없는 플레이스홀더는 replace가 아무 일도 안 하므로 기존 대시보드엔 영향 없음)
+    replacements = [
+        ("__DATA_FROM_PYTHON__", json.dumps(json_tab1, ensure_ascii=False)),
+        ("__GROUPED_DATA_FROM_PYTHON__", json.dumps(json_tab2, ensure_ascii=False)),
+        ("__WATERFALL_DATA_FROM_PYTHON__", json.dumps(waterfall_map, ensure_ascii=False)),
+        ("__INBOUND_DATA_FROM_PYTHON__", json.dumps(inbound_map, ensure_ascii=False)),
+        # 부킹 관리용: SKU(개별 코드) 단위 국내 입고 예정 (그룹 단위 inbound_map을 쓰면 그룹 내 코드마다 중복 계산됨)
+        ("__INBOUND_SKU_DATA_FROM_PYTHON__", json.dumps(domestic_inbound, ensure_ascii=False)),
+        ("__LAST_UPDATED_FROM_PYTHON__", datetime.now().strftime("%Y-%m-%d %H:%M")),
+        ("__COST_META_FROM_PYTHON__", json.dumps(cost_meta, ensure_ascii=False)),
+        ("__DAILY_SALES_FROM_PYTHON__", json.dumps(daily_sales_map, ensure_ascii=False)),
+        ("__PALLET_META_FROM_PYTHON__", json.dumps(pallet_meta, ensure_ascii=False)),
+        ("__SNAPSHOT_HISTORY_FROM_PYTHON__", json.dumps(snapshot_history, ensure_ascii=False)),
+        ("__GRADE_META_FROM_PYTHON__", json.dumps(grade_meta, ensure_ascii=False)),
+    ]
+
+    def render(tpl_path, out_path, overrides=None):
+        with open(tpl_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        for key, val in (overrides or []) + replacements:
+            content = content.replace(key, val)
+        with open(out_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+
+    # 2026-11-20부터 리뉴얼(template_v2.html)이 정식 대시보드: dashboard.html(온라인 배포본)로 생성.
+    # 기존 화면은 dashboard_legacy.html로 로컬에만 남김(비교용, git에 올리지 않음).
+    # 리뉴얼 생성이 실패하면 기존 화면을 dashboard.html로 써서 배포가 멈추지 않게 함.
+    if os.path.exists("template_v2.html"):
+        render(template_path, "dashboard_legacy.html")
+        try:
+            render("template_v2.html", output_path, overrides=[
+                ("__DATA_FROM_PYTHON__", json.dumps(json_tab1_v2, ensure_ascii=False)),
+                ("__GROUPED_DATA_FROM_PYTHON__", json.dumps(json_tab2_v2, ensure_ascii=False)),
+            ])
+            print(f"🎉 리뉴얼 대시보드 → '{output_path}' 생성 완료! (기존 화면: dashboard_legacy.html)")
+        except Exception as e:
+            print(f"   > ⚠️ 리뉴얼 생성 실패 — 기존 화면으로 '{output_path}' 생성: {e}")
+            render(template_path, output_path)
+    else:
+        render(template_path, output_path)
 
     # S&OP 리포트(sop_report.py)가 대시보드 HTML을 다시 파싱하지 않도록 데이터만 별도 저장
     dashboard_data_path = "dashboard_data.json"
