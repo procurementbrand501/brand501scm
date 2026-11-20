@@ -1,3 +1,4 @@
+import calendar
 import copy
 import os
 import warnings
@@ -1099,7 +1100,7 @@ SNAPSHOT_DELTA_FIELDS = ['us_total', 'us_days', 'us_sales',
                          'eu_total', 'eu_days', 'eu_sales']
 
 
-def update_snapshots(json_tab1, json_tab2, snap_dir="snapshots", keep_days=30):
+def update_snapshots(json_tab1, json_tab2, snap_dir="snapshots", keep_days=62, embed_days=30):
     """계산 완료된 결과(rawData/groupedData)를 날짜별로 동결 저장하고,
     최근 keep_days일치에서 델타 비교용 필드만 추려 history 객체로 반환한다.
 
@@ -1130,11 +1131,14 @@ def update_snapshots(json_tab1, json_tab2, snap_dir="snapshots", keep_days=30):
 
     # 3) 남은 동결본에서 델타 필드만 추려 history 구성 (dashboard.html에 임베드용)
     hist = {"dates": [], "tab1": {}, "tab2": {}}
+    embed_cutoff = (today - timedelta(days=embed_days)).isoformat()   # 파일은 keep_days 보관, 화면 델타는 최근 embed_days만
     for p in sorted(glob.glob(os.path.join(snap_dir, "full_*.json"))):
         m = re.search(r'full_(\d{4}-\d{2}-\d{2})\.json$', p.replace('\\', '/'))
         if not m:
             continue
         dkey = m.group(1)
+        if dkey < embed_cutoff:
+            continue
         try:
             with open(p, encoding='utf-8') as f:
                 snap = json.load(f)
@@ -1402,6 +1406,7 @@ GRADE_REGIONS = ['us', 'uk', 'eu', 'jp']   # 현재 출고/판매 수량이 있�
 # 일본(JP) — 2026-11-19 추가. 판매 파일 '2026_일본_SCM_재고관리*.xlsx' (US/UK/EU 판매 파일과 같은 양식).
 # 재고 = 일본 창고(국제·쉽너지) 합계, 이동중 재고 데이터는 아직 없음(항공·해상이동 0).
 # 안전재고 30일 / 항공 리드타임 10일 / 해상 리드타임 20일 (사용자 지정) — 화면 임계선·부킹 시간창은 template_v2.html JP 규칙.
+SEED_PERIOD_MAX_AGE_DAYS = 21   # 최근 기간 수불부가 이보다 오래되면 3개월 월평균 seeding으로 대체
 JP_SAFETY_DAYS = 30
 JP_AIR_LEAD_DAYS = 10
 JP_SEA_LEAD_DAYS = 20
@@ -1464,6 +1469,11 @@ def _ledger_year_month(path):
 def parse_ledger_outbound(path):
     """수불부 1개 파일 → {품목코드: 출고량}. 출고량 = '출고 재고(EA)' 아래 '총합(EA)' − 'fake(seeding)'.
     같은 SKU가 여러 행이면 합산 (층별화 엑셀의 '중복항목 취합' 단계와 동일)."""
+    return parse_ledger_file(path)[0]
+
+
+def parse_ledger_file(path):
+    """수불부 1개 파일 → ({품목코드: 출고량(총합−fake)}, {품목코드: fake(seeding) 수량})."""
     df = pd.read_excel(path, header=None)
     hr = None
     for r in range(min(10, len(df))):
@@ -1479,7 +1489,7 @@ def parse_ledger_outbound(path):
     out_col = next(i for i, v in enumerate(head) if '출고' in v)
     total_col = next((i for i in range(out_col, len(sub)) if '총합' in sub[i]), out_col)
     fake_col = next((i for i in range(out_col, len(sub)) if 'fake' in sub[i] or 'seeding' in sub[i]), None)
-    result = {}
+    result, fake = {}, {}
     for r in range(hr + 2, len(df)):
         code = df.iat[r, code_col]
         if pd.isna(code):
@@ -1487,19 +1497,107 @@ def parse_ledger_outbound(path):
         code = str(code).strip().upper()
         if not code or code == 'SKU':
             continue
-        q = parse_int(df.iat[r, total_col]) - (parse_int(df.iat[r, fake_col]) if fake_col is not None else 0)
+        f = parse_int(df.iat[r, fake_col]) if fake_col is not None else 0
+        q = parse_int(df.iat[r, total_col]) - f
         result[code] = result.get(code, 0) + q
-    return result
+        if f:
+            fake[code] = fake.get(code, 0) + f
+    return result, fake
+
+
+def _ledger_period(path):
+    """기간 수불부 파일명 → (시작일, 종료일) 또는 None.
+    예: '..._수불부_20261101~20261107.xlsx' → (2026-11-01, 2026-11-07), '..._수불부_20261101.xlsx' → 하루치."""
+    name = os.path.basename(path)
+    m = re.search(r'(?<!\d)(20\d{6})\s*[~\-–]\s*(20\d{6})(?!\d)', name)
+    try:
+        if m:
+            a = datetime.strptime(m.group(1), '%Y%m%d').date()
+            b = datetime.strptime(m.group(2), '%Y%m%d').date()
+            return (a, b) if a <= b else (b, a)
+        m = re.search(r'(?<!\d)(20\d{6})(?!\d)', name)
+        if m:
+            d = datetime.strptime(m.group(1), '%Y%m%d').date()
+            return (d, d)
+    except ValueError:
+        return None
+    return None
+
+
+def _is_mon_sun(p):
+    """월요일 시작·일요일 끝 7일짜리 기간 수불부인지 (워터폴 주차와 같은 단위 → 겹칠 때 우선)."""
+    return p["start"].weekday() == 0 and p["days"] == 7
+
+
+def _ledger_folder(folder=None):
+    return folder or os.path.join(os.path.dirname(os.path.abspath(__file__)), '수불부')
+
+
+def load_ledger_periods(folder=None):
+    """수불부/ 폴더(하위 포함)의 기간 수불부(파일명에 YYYYMMDD~YYYYMMDD) 전부 로드 (2026-11-20 주 단위 수불부).
+    같은 권역·같은 기간 파일이 여러 개면 mtime 최신 1개. 반환: [{region, start, end, days, out, fake, file}]."""
+    folder = _ledger_folder(folder)
+    if not os.path.isdir(folder):
+        return []
+    picked = {}
+    for f in glob.glob(os.path.join(folder, '**', '*.xls*'), recursive=True):
+        name = os.path.basename(f)
+        if name.startswith('~$'):
+            continue
+        region = next((r for r, kws in LEDGER_REGION_KEYWORDS if any(k in name for k in kws)), None)
+        per = _ledger_period(f)
+        if not region or not per:
+            continue
+        key = (region, per)
+        mt = os.path.getmtime(f)
+        if key not in picked or mt > picked[key][0]:
+            picked[key] = (mt, f)
+    out = []
+    for (region, (a, b)), (_mt, f) in sorted(picked.items(), key=lambda kv: kv[0]):
+        try:
+            q, fk = parse_ledger_file(f)
+        except Exception as e:
+            print(f"   > ⚠️ 기간 수불부 파싱 실패({os.path.basename(f)}): {e}")
+            continue
+        out.append({"region": region, "start": a, "end": b, "days": (b - a).days + 1,
+                    "out": q, "fake": fk, "file": os.path.basename(f)})
+    return out
+
+
+def _month_from_periods(periods, region, ym):
+    """월 수불부가 없는 달을 기간 수불부로 채울 수 있으면 ({code: 출고}, {code: fake}, [파일명]) 반환.
+    조건: 그 달 안에 완전히 들어가는 기간 파일들이 겹치지 않고 1일~말일을 빠짐없이 덮을 때만 (월을 걸친 파일이 있으면 포기)."""
+    y, m = ym
+    first = datetime(y, m, 1).date()
+    last = datetime(y, m, calendar.monthrange(y, m)[1]).date()
+    ps = [p for p in periods if p["region"] == region and p["end"] >= first and p["start"] <= last]
+    if not ps or any(p["start"] < first or p["end"] > last for p in ps):
+        return None
+    ps = sorted(ps, key=lambda p: p["start"])
+    cur = first
+    for p in ps:
+        if p["start"] != cur:
+            return None
+        cur = p["end"] + timedelta(days=1)
+    if cur != last + timedelta(days=1):
+        return None
+    q, fk = {}, {}
+    for p in ps:
+        for c, v in p["out"].items():
+            q[c] = q.get(c, 0) + v
+        for c, v in p["fake"].items():
+            fk[c] = fk.get(c, 0) + v
+    return q, fk, [p["file"] for p in ps]
 
 
 def load_ledger_outbound(months, folder=None):
     """수불부/ 폴더(하위 폴더 포함)에서 직전 3개월(months)에 해당하는 권역×월 수불부만 골라 출고량 로드.
     같은 권역·월 파일이 여러 개면 연도가 명시된 파일 우선, 그다음 mtime 최신 1개. 3개월 밖 파일은 무시(보관용).
-    반환: ({(region, (y,m)): {code: qty}}, {(region,(y,m)): 파일명})"""
-    folder = folder or os.path.join(os.path.dirname(os.path.abspath(__file__)), '수불부')
-    data, files = {}, {}
+    반환: ({(region, (y,m)): {code: qty}}, {(region,(y,m)): 파일명}, {(region,(y,m)): {code: fake(seeding)}})"""
+    folder = _ledger_folder(folder)
+    data, files, fakes = {}, {}, {}
     if not os.path.isdir(folder):
-        return data, files
+        return data, files, fakes
     # 수불부는 계속 쌓아두는 폴더(월별 출고 추이용) — 하위 폴더(예: 수불부6\)도 읽고, 대상 3개월 파일만 골라 씀
     picked = {}   # (region, (y,m)) → (연도명시 여부, mtime, 경로)
     for f in glob.glob(os.path.join(folder, '**', '*.xls*'), recursive=True):
@@ -1507,6 +1605,8 @@ def load_ledger_outbound(months, folder=None):
         if name.startswith('~$'):
             continue
         region = next((r for r, kws in LEDGER_REGION_KEYWORDS if any(k in name for k in kws)), None)
+        if _ledger_period(f):   # 기간(주 단위) 수불부는 아래에서 따로 처리 — 월 파일과 이중 집계 방지
+            continue
         y, mo = _ledger_year_month(f)
         if not region or not mo:
             continue
@@ -1525,11 +1625,21 @@ def load_ledger_outbound(months, folder=None):
     picked = {k: v[2] for k, v in picked.items()}
     for key, f in picked.items():
         try:
-            data[key] = parse_ledger_outbound(f)
+            data[key], fakes[key] = parse_ledger_file(f)
             files[key] = os.path.basename(f)
         except Exception as e:
             print(f"   > ⚠️ 수불부 파싱 실패({os.path.basename(f)}): {e} — 이 달은 판매 파일로 대체")
-    return data, files
+    # 월 수불부가 없는 달: 그 달을 빈틈없이 덮는 기간 수불부가 있으면 합산해서 사용 (월 파일이 있으면 월 파일 우선)
+    periods = load_ledger_periods(folder)
+    for region in {p["region"] for p in periods}:
+        for ym in months:
+            if (region, ym) in data:
+                continue
+            got = _month_from_periods(periods, region, ym)
+            if got:
+                data[(region, ym)], fakes[(region, ym)], fl = got
+                files[(region, ym)] = f"기간 수불부 {len(fl)}개 합산"
+    return data, files, fakes
 
 
 def build_unregistered_rows(df):
@@ -1623,13 +1733,196 @@ def _inject_extra_region_rows(json_tab1, json_tab2, master_df, extra_stock, grou
     return added1, added2
 
 
+PAST_REGIONS = ['us', 'uk', 'eu', 'jp']
+LEDGER_SALES_REGIONS = ('us', 'uk')   # 지난 실적 주판매를 수불부 출고(총합 − fake)로 보는 권역 — 나머지는 판매 파일
+
+
+def past_week_ranges(today=None):
+    """지난달 1일 ~ 어제를 월~일 주차로 자른 목록 [(시작, 끝)]. 첫 주는 지난달 1일부터, 마지막 주는 어제까지(이번 주 경과분)."""
+    today = today or datetime.now().date()
+    first = (today.replace(day=1) - timedelta(days=1)).replace(day=1)
+    end_all = today - timedelta(days=1)
+    out, cur = [], first
+    while cur <= end_all:
+        wend = min(cur + timedelta(days=6 - cur.weekday()), end_all)
+        out.append((cur, wend))
+        cur = wend + timedelta(days=1)
+    return out
+
+
+def _past_daily_seed(weeks):
+    """과거 주차 기간의 권역별 일자별 수불부 값 → (fake, src, out).
+    fake/out = {region: {code: {date: qty}}} (out = 출고 총합 − fake, 즉 seeding 뺀 출고), src = {region: {date: 'period'|'monthly'}}.
+    기간(주 단위) 수불부가 덮는 날은 그 파일 fake ÷ 기간 일수, 아니면 그 달 월 수불부 fake ÷ 그 달 일수 (둘 다 없으면 없음)."""
+    if not weeks:
+        return {}, {}
+    start, end = weeks[0][0], weeks[-1][1]
+    months, d = [], start.replace(day=1)
+    while d <= end:
+        months.append((d.year, d.month))
+        d = (d.replace(day=28) + timedelta(days=4)).replace(day=1)
+    mout, _files, mfake = load_ledger_outbound(months)
+    # 같은 날을 여러 기간 파일이 덮으면 월~일 7일 파일을 우선 (워터폴 주차와 같은 단위), 그다음 짧은 기간
+    periods = sorted(load_ledger_periods(), key=lambda p: (not _is_mon_sun(p), p["days"], p["start"]))
+    seed, src, outd = {}, {}, {}
+    day = start
+    while day <= end:
+        for p in periods:
+            if p["start"] <= day <= p["end"]:
+                rg = p["region"]
+                if src.get(rg, {}).get(day) == 'period':
+                    continue    # 같은 날을 덮는 기간 파일이 여러 개면 먼저 잡힌 1개만
+                src.setdefault(rg, {})[day] = 'period'
+                for c, q in p["fake"].items():
+                    e = seed.setdefault(rg, {}).setdefault(c, {})
+                    e[day] = e.get(day, 0) + q / p["days"]
+                for c, q in p["out"].items():
+                    e = outd.setdefault(rg, {}).setdefault(c, {})
+                    e[day] = e.get(day, 0) + q / p["days"]
+        for (rg, ym), fk in mfake.items():
+            if ym != (day.year, day.month) or src.get(rg, {}).get(day):
+                continue
+            mdays = calendar.monthrange(*ym)[1]
+            src.setdefault(rg, {})[day] = 'monthly'
+            for c, q in fk.items():
+                e = seed.setdefault(rg, {}).setdefault(c, {})
+                e[day] = e.get(day, 0) + q / mdays
+            for c, q in mout.get((rg, ym), {}).items():
+                e = outd.setdefault(rg, {}).setdefault(c, {})
+                e[day] = e.get(day, 0) + q / mdays
+        day += timedelta(days=1)
+    return seed, src, outd
+
+
+def _load_snapshot_stock(dates, snap_dir="snapshots"):
+    """날짜별 동결본(full_YYYY-MM-DD.json)에서 권역 창고재고({r}_stock)만 → {date: {'tab1': {code: {r: qty}}, 'tab2': {...}}}."""
+    out = {}
+    for dt in dates:
+        path = os.path.join(snap_dir, f"full_{dt.isoformat()}.json")
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, encoding='utf-8') as f:
+                snap = json.load(f)
+        except Exception:
+            continue
+        out[dt] = {tk: {str(r.get('code')): {rg: r.get(f'{rg}_stock') for rg in PAST_REGIONS if r.get(f'{rg}_stock') is not None}
+                        for r in snap.get(tk, [])} for tk in ('tab1', 'tab2')}
+    return out
+
+
+def attach_past_weeks(json_tab1, json_tab2, master_df, region_daily, today=None):
+    """워터폴 위쪽에 보여줄 '지난달 1일 ~ 어제' 주차별 실적을 행마다 부착 (2026-11-20).
+    행 필드 {r}_past = [[주판매, seeding, 기초재고, 기말재고], ...] (meta weeks 순서, 모르는 값은 None).
+    - 주판매: US/UK = 수불부 출고(총합 − fake, 주간 파일 우선·없으면 월 파일 일할), EU/JP = 판매 파일 일자별 실적
+      (층별화 등급과 같은 기준, 2026-11-20). 통합 제품명은 멤버 코드 합산
+    - seeding: 수불부 fake (주 단위 파일 우선, 없으면 월 파일 일할) — US/UK만
+    - 재고: 그 주 첫날(없으면 그 주 안의 가장 이른 날) 동결본의 창고재고, 기말 = 다음 주 기초 (마지막 주는 현재 재고)"""
+    today = today or datetime.now().date()
+    weeks = past_week_ranges(today)
+    if not weeks:
+        return {}
+    seed, seed_src, ledger_out = _past_daily_seed(weeks)
+    all_days = [weeks[0][0] + timedelta(days=i) for i in range((weeks[-1][1] - weeks[0][0]).days + 1)]
+    snaps = _load_snapshot_stock(all_days + [today])
+    # 주차별 기초재고에 쓸 스냅샷 날짜 (그 주 안의 가장 이른 날)
+    snap_day = []
+    for a, b in weeks:
+        snap_day.append(next((d for d in sorted(snaps) if a <= d <= b), None))
+    # 판매 데이터가 있는 날짜 범위 (권역별) — 범위 밖 주차는 '모름'(None)
+    sales_range = {}
+    for rg in PAST_REGIONS:
+        ds = [d for dm in (region_daily.get(rg) or {}).values() for d in dm]
+        if ds:
+            sales_range[rg] = (min(ds), max(ds))
+
+    code2group = {}
+    if master_df is not None and '통합 제품명' in master_df.columns:
+        for _, r in master_df.dropna(subset=['품목코드']).iterrows():
+            g = str(r.get('통합 제품명', '') or '').strip()
+            if g and g.lower() != 'nan':
+                for c in str(r['품목코드']).split(','):
+                    if c.strip():
+                        code2group.setdefault(c.strip().upper(), g)
+    members = {}
+    for c, g in code2group.items():
+        members.setdefault(g, set()).add(c)
+    for row in json_tab1:
+        g = str(row.get('통합 제품명', '') or '')
+        if g:
+            members.setdefault(g, set()).add(str(row.get('code', '')).strip().upper())
+
+    def week_sum(daymap_list, a, b):
+        tot, d = 0, a
+        while d <= b:
+            for dm in daymap_list:
+                tot += dm.get(d, 0)
+            d += timedelta(days=1)
+        return tot
+
+    def fill(row, codes, tab_key):
+        key = str(row.get('code'))
+        for rg in PAST_REGIONS:
+            if rg in LEDGER_SALES_REGIONS:
+                sdaily = [ledger_out[rg][c] for c in codes if rg in ledger_out and c in ledger_out[rg]]
+            else:
+                sdaily = [region_daily[rg][c] for c in codes if region_daily.get(rg) and c in region_daily[rg]]
+            fdaily = [seed[rg][c] for c in codes if rg in seed and c in seed[rg]]
+            vals, any_val = [], False
+            for i, (a, b) in enumerate(weeks):
+                has_src = rg in seed_src and any(seed_src[rg].get(a + timedelta(days=k)) for k in range((b - a).days + 1))
+                if rg in LEDGER_SALES_REGIONS:
+                    sales = int(round(week_sum(sdaily, a, b))) if has_src else None
+                else:
+                    rng = sales_range.get(rg)
+                    sales = week_sum(sdaily, a, b) if rng and a >= rng[0] else None
+                sd = int(round(week_sum(fdaily, a, b))) if has_src else None
+                op = (snaps.get(snap_day[i]) or {}).get(tab_key, {}).get(key, {}).get(rg) if snap_day[i] else None
+                if i + 1 < len(weeks):
+                    nd = snap_day[i + 1]
+                    cl = (snaps.get(nd) or {}).get(tab_key, {}).get(key, {}).get(rg) if nd else None
+                else:
+                    cl = row.get(f'{rg}_stock')
+                if sales or sd or op or cl:
+                    any_val = True
+                vals.append([sales, sd, op, cl])
+            if any_val:
+                row[f'{rg}_past'] = vals
+
+    for row in json_tab1:
+        fill(row, {str(row.get('code', '')).strip().upper()}, 'tab1')
+    for row in json_tab2:
+        g = str(row.get('통합 제품명', '') or '')
+        codes = set(members.get(g, set())) | {str(row.get('code', '')).strip().upper()}
+        fill(row, codes, 'tab2')
+
+    src_meta = {}
+    for rg, dm in seed_src.items():
+        lst = []
+        for a, b in weeks:
+            got = [dm.get(a + timedelta(days=k)) for k in range((b - a).days + 1)]
+            kinds = set(got) - {None}
+            kind = 'period' if kinds == {'period'} else 'monthly' if kinds == {'monthly'} else ('mixed' if kinds else None)
+            lst.append([kind, sum(1 for g in got if g)] if kind else None)   # [종류, 수불부가 덮는 일수]
+        src_meta[rg] = lst
+    meta = {"weeks": [[a.isoformat(), b.isoformat()] for a, b in weeks],
+            "ledger_sales_regions": list(LEDGER_SALES_REGIONS),
+            "snap_days": [d.isoformat() if d else None for d in snap_day],
+            "seed_src": src_meta,
+            "sales_range": {rg: [a.isoformat(), b.isoformat()] for rg, (a, b) in sales_range.items()}}
+    print(f"   > 지난 실적(워터폴): {weeks[0][0]} ~ {weeks[-1][1]} {len(weeks)}개 주차, "
+          f"재고 스냅샷 {sum(1 for d in snap_day if d)}/{len(weeks)}주, seeding 권역 {', '.join(r.upper() for r in src_meta) or '-'}")
+    return meta
+
+
 def enrich_v2_fields(json_tab1, json_tab2, master_df, sales_files, excluded_codes, unreg_rows=None,
                      jp_sales_df=None, jp_daily=None):
     """층별화 등급 + 카테고리 + 추가 권역 재고를 tab1(개별 코드)/tab2(통합 제품명) JSON 행에 부착하고 메타 반환.
-    등급 수량: US/UK = 어크로스 비 수불부 출고량(없는 달은 판매 파일), EU = 판매 파일 (2026-11-19 사용자 결정).
+    등급 수량: US/UK = 어크로스 비 수불부 출고량(총합 − fake(seeding), 없는 달은 판매 파일), EU/JP = 판매 파일
+    (2026-11-19 사용자 결정, 2026-11-20 재확인 — 판매 파일 통일안은 철회).
     화면에서 권역을 고르면 grade_universe로 브라우저가 등급을 다시 계산함."""
     months = prev_full_months(3)
-    ledger, ledger_files = load_ledger_outbound(months)
+    ledger, ledger_files, ledger_fake = load_ledger_outbound(months)
     region_qty = {r: {} for r in GRADE_REGIONS}
     sources = {}
     missing_all = {}
@@ -1647,7 +1940,7 @@ def enrich_v2_fields(json_tab1, json_tab2, master_df, sales_files, excluded_code
         for ym in sorted(months):
             label = f"{ym[1]}월"
             if (region, ym) in ledger:
-                totals = ledger[(region, ym)]
+                totals = ledger[(region, ym)]       # 수불부 출고 = 총합 − fake(seeding) → seeding 중복 집계 없음
                 src.append(f"{label} 수불부")
             else:
                 totals = sales_totals_by_month.get(ym, {})
@@ -1766,6 +2059,55 @@ def enrich_v2_fields(json_tab1, json_tab2, master_df, sales_files, excluded_code
     if a1 or a2:
         print(f"   > 일본 판매 중인데 재고 0인 행 추가: 개별코드 {a1}개 / 통합제품명 {a2}개")
 
+    # fake(seeding) 일평균 (권역별, 수불부 있는 US/UK만). 워터폴에서 주차 일수 × 일평균만큼 잔여재고에서 차감.
+    #  ① 기간(주 단위) 수불부가 있으면 가장 최근 파일 1개의 fake ÷ 그 기간 일수 (2026-11-20 주 단위 전환)
+    #     — 최근 파일 종료일이 SEED_PERIOD_MAX_AGE_DAYS보다 오래됐으면 ②로 대체
+    #  ② 없으면 최근 3개월 월 수불부 fake 합계 ÷ 그 달들 일수
+    seed_code, seed_meta = {}, {}
+    periods = load_ledger_periods()
+    today = datetime.now().date()
+    for rg in sorted({k[0] for k in ledger_fake} | {p["region"] for p in periods}):
+        rps = [p for p in periods if p["region"] == rg]
+        latest = max(rps, key=lambda p: (p["end"], _is_mon_sun(p), p["start"])) if rps else None
+        if latest and (today - latest["end"]).days <= SEED_PERIOD_MAX_AGE_DAYS:
+            tot = {c: q for c, q in latest["fake"].items() if c not in excluded_codes}
+            days = latest["days"]
+            for c, q in tot.items():
+                seed_code.setdefault(c, {})[rg] = q / days
+            seed_meta[rg] = {"mode": "period", "start": latest["start"].isoformat(),
+                             "end": latest["end"].isoformat(), "days": days, "file": latest["file"],
+                             "total": int(sum(tot.values())), "codes": len(tot)}
+            continue
+        yms = sorted(ym for (r2, ym) in ledger_fake if r2 == rg)
+        days = sum(calendar.monthrange(y, m)[1] for y, m in yms)
+        if not days:
+            continue
+        tot = {}
+        for ym in yms:
+            for c, q in ledger_fake[(rg, ym)].items():
+                if c not in excluded_codes:
+                    tot[c] = tot.get(c, 0) + q
+        for c, q in tot.items():
+            seed_code.setdefault(c, {})[rg] = q / days
+        seed_meta[rg] = {"mode": "monthly", "months": [f"{y}-{m:02d}" for y, m in yms], "days": days,
+                         "total": int(sum(tot.values())), "codes": len(tot)}
+    for rg, meta in seed_meta.items():
+        if meta["mode"] == "period":
+            print(f"   > seeding({rg.upper()}): 기간 수불부 {meta['start']}~{meta['end']} ({meta['days']}일) "
+                  f"fake {meta['total']:,}개 / {meta['codes']}개 코드")
+        else:
+            print(f"   > seeding({rg.upper()}): 월 수불부 {', '.join(meta['months'])} 평균 ({meta['days']}일) fake {meta['total']:,}개")
+    seed_group = {}
+    for c, d in seed_code.items():
+        g = code2group.get(c, c)
+        acc = seed_group.setdefault(g, {})
+        for rg, v in d.items():
+            acc[rg] = acc.get(rg, 0) + v
+
+    def apply_seed(row, d):
+        for rg in GRADE_REGIONS:
+            row[f'{rg}_seed_daily'] = round((d or {}).get(rg, 0), 2)
+
     def apply_jp(row, rec):
         """JP 전체 블록 필드: 이동중 0, 총재고=창고재고, 안전재고=일판매×30일(중량물 +30), 회전일."""
         rec = rec or {}
@@ -1791,6 +2133,7 @@ def enrich_v2_fields(json_tab1, json_tab2, master_df, sales_files, excluded_code
         for r in extra_keys:
             row[f'{r}_stock'] = int(es.get(r, 0))
         apply_jp(row, jp_code.get(key))
+        apply_seed(row, seed_code.get(key))
     for row in json_tab2:
         gname = str(row.get('통합 제품명', ''))
         g = grades2.get(gname, empty)
@@ -1801,6 +2144,7 @@ def enrich_v2_fields(json_tab1, json_tab2, master_df, sales_files, excluded_code
         for r in extra_keys:
             row[f'{r}_stock'] = int(es.get(r, 0))
         apply_jp(row, jp_group.get(gname) or jp_code.get(rcode))
+        apply_seed(row, seed_group.get(gname) or seed_code.get(rcode))
 
     def count(rows):
         cnt = {'SA': 0, 'A': 0, 'B': 0, 'C': 0}
@@ -1825,6 +2169,7 @@ def enrich_v2_fields(json_tab1, json_tab2, master_df, sales_files, excluded_code
         "category_missing": sorted(cat_miss),
         "regions": [{"key": r, "label": l, "full": full} for r, l, full in V2_REGIONS],
         "grade_regions": GRADE_REGIONS,
+        "seed_meta": seed_meta,
         "jp_rule": {"safety_days": JP_SAFETY_DAYS, "air_lead_days": JP_AIR_LEAD_DAYS, "sea_lead_days": JP_SEA_LEAD_DAYS},
         "extra_warehouses": extra_wh,
         "universe_tab1": uni1,
@@ -2374,6 +2719,13 @@ def run_dashboard_generator():
 
     # 스냅샷 동결 저장 + 최근 30일 델타 비교 이력 (기존·리뉴얼 대시보드 공통, 1회만 저장)
     snapshot_history = update_snapshots(json_tab1, json_tab2)
+
+    # 리뉴얼 워터폴: 지난달 1일 ~ 어제 주차별 실적(판매·seeding·당시 재고) — 실패해도 빌드 계속
+    if grade_meta:
+        try:
+            grade_meta['past'] = attach_past_weeks(json_tab1_v2, json_tab2_v2, master_df, region_daily)
+        except Exception as e:
+            print(f"   > ⚠️ 지난 실적 계산 실패(빌드에는 영향 없음): {e}")
 
     # 플레이스홀더 → 주입값. 기존(template.html)·리뉴얼(template_v2.html)이 같은 데이터를 쓴다.
     # (템플릿에 없는 플레이스홀더는 replace가 아무 일도 안 하므로 기존 대시보드엔 영향 없음)

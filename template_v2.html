@@ -219,6 +219,9 @@
         .waterfall-row-negative { background: #fee2e2; }
         .waterfall-row-negative td { color: #991b1b; font-weight: 600; }
         .waterfall-row-incoming { background: #ecfdf5; }
+        .waterfall-row-past td { background: #f8fafc; color: #475569; }
+        .waterfall-row-past td.past-actual { color: #0f172a; font-weight: 600; }
+        .waterfall-sep td { background: #e2e8f0 !important; color: #334155; font-size: 11.5px; font-weight: 700; text-align: left !important; padding: 5px 10px; }
         .modal-info-bar { font-size: 12px; color: #64748b; margin-bottom: 10px; }
         .modal-info-bar strong { color: #1e293b; }
 
@@ -1606,7 +1609,10 @@
 
         const todayMonthKey = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`;
 
+        // fake(seeding): 수불부 최근 3개월 일평균 × 주차 일수 → 잔여재고에서 차감 (US/UK만, 수불부 없는 권역은 0)
+        const seedDaily = row[`${region}_seed_daily`] || 0;
         let opening = initialStock;
+        let openingNoSeed = initialStock;   // 비교용: seeding 없이 주판매만 뺀 잔여재고
         return weeks.map(w => {
             // 포캐스팅 일판매: 당월은 실판매를 그대로 사용 (월 진행 중이라 포캐스팅과 거의 동일하다고 봄),
             // 그 외 월은 해당 월 판매예정 ÷ 그 달 주차 수 ÷ 7 (판매예정 없는 월은 가장 가까운 월 값)
@@ -1620,15 +1626,18 @@
             }
             const daily = (useFcst && fcstDaily !== null) ? fcstDaily : dailySales;
             const weekSales = w.days * daily;
-            const closing  = opening + w.incoming - weekSales;
+            const weekSeed = Math.round(w.days * seedDaily);
+            const closing  = opening + w.incoming - weekSales - weekSeed;
+            const closingNoSeed = openingNoSeed + w.incoming - weekSales;
             const r = {
                 month: `${w.start.getMonth()+1}월`,
                 range: formatRange(w.start, w.end),
                 days: w.days,
                 opening, incoming: w.incoming,
-                dailySales, fcstDaily, weekSales, closing
+                dailySales, fcstDaily, weekSales, weekSeed, closing, closingNoSeed
             };
             opening = closing;
+            openingNoSeed = closingNoSeed;
             return r;
         });
     }
@@ -1639,6 +1648,50 @@
     function toggleFcstSales(checked) {
         useFcstSales = checked;
         renderWaterfall(currentWfRegion);
+    }
+
+    /* 지난달 1일 ~ 어제 주차별 실적 (app.py attach_past_weeks) — 워터폴 위쪽에 회색 행으로 표시 */
+    function renderPastRows(region) {
+        const pm = gradeMeta && gradeMeta.past;
+        const past = currentModalRow && currentModalRow[`${region}_past`];
+        if (!pm || !pm.weeks || !pm.weeks.length) return '';
+        const fmt = v => (v === null || v === undefined) ? '-' : v.toLocaleString();
+        const md = d => { const [, m, dd] = d.split('-'); return `${+m}/${+dd}`; };
+        const srcs = (pm.seed_src || {})[region] || [];
+        const srcLabel = { period: '주간 수불부', monthly: '월 수불부 일할', mixed: '주간+월 수불부' };
+        const ledgerSales = (pm.ledger_sales_regions || []).includes(region);
+        const salesSrc = ledgerSales ? '수불부 출고(총합−fake)' : '판매 파일 일자별 실적';
+        let h = `<tr class="waterfall-sep"><td colspan="11">📜 지난 실적 (${md(pm.weeks[0][0])} ~ ${md(pm.weeks[pm.weeks.length-1][1])}) · 주판매 = ${salesSrc} · seeding = 수불부 · * = 그 주 일부 날짜만 수불부 있음 · 재고 = 그 주 첫 대시보드 기록(없으면 -)</td></tr>`;
+        pm.weeks.forEach((w, i) => {
+            const v = (past && past[i]) || [null, null, null, null];
+            const [sales, seed, op, cl] = v;
+            const s0 = new Date(w[0] + 'T00:00:00'), s1 = new Date(w[1] + 'T00:00:00');
+            const days = Math.round((s1 - s0) / 86400000) + 1;
+            const src = srcs[i];
+            const covered = ledgerSales ? (src ? src[1] : 0) : days;   // 수불부 기준이면 수불부가 덮는 날만으로 평균
+            const partial = ledgerSales && src && src[1] < days;
+            const daily = (sales === null || sales === undefined || !covered) ? null : Math.round(sales / covered);
+            const seedTip = src ? `${srcLabel[src[0]]}${src[1] < days ? ` · ${days}일 중 ${src[1]}일만 수불부 있음` : ''}`
+                                : (region === 'us' || region === 'uk' ? '해당 기간 수불부 없음' : '수불부 없는 권역');
+            const nextSnap = i + 1 < pm.weeks.length ? (pm.snap_days || [])[i + 1] : null;
+            const clTip = i + 1 >= pm.weeks.length ? '현재 재고' : (nextSnap ? `${md(nextSnap)} 대시보드 재고` : '다음 주 대시보드 기록 없음');
+            const opTip = pm.snap_days && pm.snap_days[i] ? `${md(pm.snap_days[i])} 대시보드 재고` : '그 주 대시보드 기록 없음';
+            h += `<tr class="waterfall-row-past">
+                <td class="month-cell">${s0.getMonth()+1}월</td>
+                <td class="week-cell">${formatRange(s0, s1)}</td>
+                <td class="week-cell">${days}</td>
+                <td title="${opTip}">${fmt(op)}</td>
+                <td>-</td>
+                <td title="${ledgerSales ? `주판매 ÷ 수불부 있는 일수(${covered}일)` : '주판매 ÷ 일수 (실제 평균)'}">${fmt(daily)}</td>
+                <td>-</td>
+                <td class="past-actual" title="${ledgerSales ? `${src ? srcLabel[src[0]] : '수불부 없음'} 출고(총합−fake)${partial ? ` · ${days}일 중 ${src[1]}일만` : ''}` : '판매 파일 일자별 실적 합계'}">${fmt(sales)}${partial ? '*' : ''}</td>
+                <td class="past-actual" style="color:#b45309;" title="${seedTip}">${seed ? seed.toLocaleString() : (src ? '0' : '-')}${src && src[1] < days ? '*' : ''}</td>
+                <td title="${clTip}">${fmt(cl)}</td>
+                <td>-</td>
+            </tr>`;
+        });
+        h += `<tr class="waterfall-sep"><td colspan="11">🔮 오늘부터 예측 (아래는 기존 워터폴)</td></tr>`;
+        return h;
     }
 
     function renderWaterfall(region) {
@@ -1700,14 +1753,26 @@
                 <div style="font-size:13px; color:#16a34a; font-weight:600;">✅ 해당 기간 내 결품 없음 — 부킹 불필요</div>`}
             </div>`;
 
+        const sm = ((gradeMeta && gradeMeta.seed_meta) || {})[region];
+        const md = d => { const [, m, dd] = d.split('-'); return `${+m}/${+dd}`; };
+        const seedTitle = !sm ? `${region.toUpperCase()}는 수불부가 없어 fake(seeding) 0으로 계산`
+            : sm.mode === 'period'
+                ? `최근 주간 수불부 ${md(sm.start)}~${md(sm.end)} fake(seeding) ${sm.total.toLocaleString()}개 ÷ ${sm.days}일 = 일평균, × 주차 일수 · 잔여재고에서 차감 (${sm.file})`
+                : `수불부 fake(seeding) ${sm.months.join(', ')} 합계 ÷ ${sm.days}일 = 일평균, × 주차 일수 · 잔여재고에서 차감`;
+        const seedBasis = !sm ? '(수불부 없음)'
+            : sm.mode === 'period' ? `(${md(sm.start)}~${md(sm.end)} 기준)` : `(최근 ${sm.months.length}개월 평균)`;
         let html = toggleHtml + tbdHtml + bookingHtml + `<table class="waterfall-table">
             <thead><tr>
                 <th>월</th><th>주차</th><th>일수</th>
                 <th>기초재고</th><th>입고</th>
                 <th style="${!useFcstSales ? 'background:#eff6ff; color:#1d4ed8;' : ''}">일판매</th>
                 <th style="${useFcstSales ? 'background:#f5f3ff; color:#7c3aed;' : 'color:#7c3aed;'}">포캐스팅 일판매</th>
-                <th>주판매</th><th>잔여재고</th>
+                <th>주판매</th>
+                <th style="color:#b45309;" title="${seedTitle}">fake(seeding)<br><span style="font-size:10.5px; font-weight:500; color:#64748b;">${seedBasis}</span></th>
+                <th title="기초재고 + 입고 − 주판매 − fake(seeding) · 권장 부킹·부킹 관리 계산 기준">잔여재고<br><span style="font-size:10.5px; font-weight:500; color:#64748b;">(주판매+씨딩 반영)</span></th>
+                <th title="기초재고 + 입고 − 주판매 (seeding 미반영, 비교용)" style="color:#64748b;">잔여재고<br><span style="font-size:10.5px; font-weight:500;">(주판매만 반영)</span></th>
             </tr></thead><tbody>`;
+        html += renderPastRows(region);
         rows.forEach((r, i) => {
             const cls = r.closing < 0 ? 'waterfall-row-negative' : (r.incoming > 0 ? 'waterfall-row-incoming' : '');
             const rule = BOOKING_RULE[region];
@@ -1723,7 +1788,9 @@
                 <td style="${!useFcstSales ? 'background:#eff6ff; font-weight:600;' : ''}">${r.dailySales.toLocaleString()}</td>
                 <td style="color:#7c3aed; ${useFcstSales ? 'background:#f5f3ff; font-weight:600;' : ''}">${r.fcstDaily === null ? '-' : r.fcstDaily.toLocaleString()}</td>
                 <td>${r.weekSales.toLocaleString()}</td>
+                <td style="color:#b45309;">${r.weekSeed ? r.weekSeed.toLocaleString() : '-'}</td>
                 <td><strong>${r.closing.toLocaleString()}</strong></td>
+                <td style="color:${r.closingNoSeed < 0 ? '#b91c1c' : '#64748b'};">${r.closingNoSeed.toLocaleString()}</td>
             </tr>`;
         });
         html += `</tbody></table>`;
