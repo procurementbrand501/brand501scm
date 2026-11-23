@@ -1202,7 +1202,10 @@
 
         useFcstSales = false;   // 모달 열 때마다 기본값(실판매)으로 시작
         switchModalTop('waterfall');
-        switchModalRegion('us');
+        // 권역 선택 칩에서 고른 권역 중 워터폴이 있는 첫 권역(US/UK/EU/JP 순)으로 열기. 전체 권역이거나 해당 없으면 US
+        const modalRegions = ['us', 'uk', 'eu', 'jp'];
+        const firstSel = isAllRegions() ? null : selRegionObjs().map(r => r.key).find(k => modalRegions.includes(k));
+        switchModalRegion(firstSel || 'us');
         document.getElementById('waterfall-modal').classList.add('show');
     }
 
