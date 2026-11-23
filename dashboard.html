@@ -237,7 +237,7 @@
     <a class="v2-compare-link" id="legacy-link" href="dashboard_legacy.html" target="_blank" rel="noopener" style="display:none;">↗ 기존 대시보드 열기 (비교용)</a>
     <script>try { if (location.protocol === 'file:') document.getElementById('legacy-link').style.display = ''; } catch (e) {}</script>
     <p>정렬 기준: 마스터 계정 상품라인 -> 통합 제품명 그룹화 순 | 필터링: 재고·판매·국내재고가 모두 0인 품목만 제외 (결품 판매중 SKU는 🚨 배지로 표시)</p>
-    <p id="last-updated" style="margin-top:6px; font-size:12px; opacity:0.75;">최종 갱신: 2026-11-23 11:26</p>
+    <p id="last-updated" style="margin-top:6px; font-size:12px; opacity:0.75;">최종 갱신: 2026-11-23 16:19</p>
     <div style="margin-top:8px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
         <label style="font-size:12px; opacity:0.9;">🕐 시점 비교:
             <select id="compare-select" onchange="onCompareChange(this.value)"
@@ -1202,7 +1202,10 @@
 
         useFcstSales = false;   // 모달 열 때마다 기본값(실판매)으로 시작
         switchModalTop('waterfall');
-        switchModalRegion('us');
+        // 권역 선택 칩에서 고른 권역 중 워터폴이 있는 첫 권역(US/UK/EU/JP 순)으로 열기. 전체 권역이거나 해당 없으면 US
+        const modalRegions = ['us', 'uk', 'eu', 'jp'];
+        const firstSel = isAllRegions() ? null : selRegionObjs().map(r => r.key).find(k => modalRegions.includes(k));
+        switchModalRegion(firstSel || 'us');
         document.getElementById('waterfall-modal').classList.add('show');
     }
 
