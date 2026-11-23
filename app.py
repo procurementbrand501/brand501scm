@@ -503,7 +503,10 @@ def read_transit_data(file_path):
         else:
             alt_col = next((c for c in df.columns if key.split('_')[0].upper() in str(c) and ('항공' if 'air' in key else '해상') in str(c)), None)
             res_df[key] = df[alt_col].apply(parse_int) if alt_col else 0
-    return res_df
+    # 품목코드는 다른 원본(재고·판매·수불부)처럼 대문자로 통일 — 'GLMX226_v01'처럼 소문자로 적힌 행이
+    # 마스터의 'GLMX226_V01'과 따로 노는 문제 방지 (2026-11-23). 대문자화 후 같은 코드는 합산.
+    res_df['품목코드'] = res_df['품목코드'].str.upper()
+    return res_df.groupby('품목코드', as_index=False).sum(numeric_only=True)
 
 
 def parse_transit_schedule(file_path, year=2026):
