@@ -237,7 +237,7 @@
     <a class="v2-compare-link" id="legacy-link" href="dashboard_legacy.html" target="_blank" rel="noopener" style="display:none;">↗ 기존 대시보드 열기 (비교용)</a>
     <script>try { if (location.protocol === 'file:') document.getElementById('legacy-link').style.display = ''; } catch (e) {}</script>
     <p>정렬 기준: 마스터 계정 상품라인 -> 통합 제품명 그룹화 순 | 필터링: 재고·판매·국내재고가 모두 0인 품목만 제외 (결품 판매중 SKU는 🚨 배지로 표시)</p>
-    <p id="last-updated" style="margin-top:6px; font-size:12px; opacity:0.75;">최종 갱신: 2026-11-24 11:55</p>
+    <p id="last-updated" style="margin-top:6px; font-size:12px; opacity:0.75;">최종 갱신: 2026-11-24 18:21</p>
     <div style="margin-top:8px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
         <label style="font-size:12px; opacity:0.9;">🕐 시점 비교:
             <select id="compare-select" onchange="onCompareChange(this.value)"
@@ -1127,6 +1127,24 @@
             return -1;
         }
 
+        /* 재고 소진 예상일(총재고 ÷ 일판매, 소수점까지) — 작을수록 급함. 판매 없으면 Infinity(맨 뒤) */
+        function stockoutDays(row, r) {
+            const sales = Number(row[`${r}_sales`]) || 0;
+            if (sales <= 0) return Infinity;
+            return Math.max(0, Number(row[`${r}_total`]) || 0) / sales;
+        }
+        // 정렬 대상 권역: 항공긴급 필터를 켰으면 켠 권역 중 그 행이 해당되는 권역, 아니면 화면에 보이는 회전일 권역
+        const DAY_REGIONS = ['us','uk','eu','jp'];
+        const shownDayRegions = DAY_REGIONS.filter(r => isAllRegions() || selectedRegions.includes(r));
+        function priorityDays(row) {
+            const regs = anyFilter
+                ? DAY_REGIONS.filter(r => af[r] && (isAirUrgent(row, r) || isDanger(row, r)))
+                : shownDayRegions;
+            let m = Infinity;
+            regs.forEach(r => { m = Math.min(m, stockoutDays(row, r)); });
+            return m;
+        }
+
         rows.forEach(tr => {
             const idx = parseInt(tr.getAttribute('data-row-idx'));
             const row = data[idx];
@@ -1149,21 +1167,20 @@
             }
             tr.style.display = (searchOk && filterOk && plcOk && swingOk) ? '' : 'none';
             tr.setAttribute('data-group-key', groupKey);
+            tr._prio = priorityDays(row);
         });
 
-        if (anyFilter) {
-            const visible = rows.filter(tr => tr.style.display !== 'none');
-            visible.sort((a, b) => {
-                const ga = parseInt(a.getAttribute('data-group-key'));
-                const gb = parseInt(b.getAttribute('data-group-key'));
-                if (ga !== gb) return ga - gb;
-                return parseInt(a.getAttribute('data-row-idx')) - parseInt(b.getAttribute('data-row-idx'));
-            });
-            visible.forEach(tr => tbody.appendChild(tr));
-        } else {
-            rows.sort((a, b) => parseInt(a.getAttribute('data-row-idx')) - parseInt(b.getAttribute('data-row-idx')));
-            rows.forEach(tr => tbody.appendChild(tr));
-        }
+        // 우선순위 정렬: 재고 소진 예상일이 가까운 순 → 같으면 원래 순서 (필터 켜고 끄기와 무관하게 항상 적용)
+        rows.sort((a, b) => {
+            const pa = a._prio, pb = b._prio;
+            if (pa !== pb) {
+                if (pa === Infinity) return 1;
+                if (pb === Infinity) return -1;
+                return pa - pb;
+            }
+            return parseInt(a.getAttribute('data-row-idx')) - parseInt(b.getAttribute('data-row-idx'));
+        });
+        rows.forEach(tr => tbody.appendChild(tr));
     }
 
     /* ══════════════════════════════════════════
