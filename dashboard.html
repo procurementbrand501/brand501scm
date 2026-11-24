@@ -237,7 +237,7 @@
     <a class="v2-compare-link" id="legacy-link" href="dashboard_legacy.html" target="_blank" rel="noopener" style="display:none;">↗ 기존 대시보드 열기 (비교용)</a>
     <script>try { if (location.protocol === 'file:') document.getElementById('legacy-link').style.display = ''; } catch (e) {}</script>
     <p>정렬 기준: 마스터 계정 상품라인 -> 통합 제품명 그룹화 순 | 필터링: 재고·판매·국내재고가 모두 0인 품목만 제외 (결품 판매중 SKU는 🚨 배지로 표시)</p>
-    <p id="last-updated" style="margin-top:6px; font-size:12px; opacity:0.75;">최종 갱신: 2026-11-24 11:29</p>
+    <p id="last-updated" style="margin-top:6px; font-size:12px; opacity:0.75;">최종 갱신: 2026-11-24 11:55</p>
     <div style="margin-top:8px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
         <label style="font-size:12px; opacity:0.9;">🕐 시점 비교:
             <select id="compare-select" onchange="onCompareChange(this.value)"
@@ -1773,7 +1773,7 @@
                 <th>주판매</th>
                 <th style="color:#b45309;" title="${seedTitle}">fake(seeding)<br><span style="font-size:10.5px; font-weight:500; color:#64748b;">${seedBasis}</span></th>
                 <th title="기초재고 + 입고 − 주판매 − fake(seeding) · 권장 부킹·부킹 관리 계산 기준">잔여재고<br><span style="font-size:10.5px; font-weight:500; color:#64748b;">(주판매+씨딩 반영)</span></th>
-                <th title="기초재고 + 입고 − 주판매 (seeding 미반영, 비교용)" style="color:#64748b;">잔여재고<br><span style="font-size:10.5px; font-weight:500;">(주판매만 반영)</span></th>
+                <th title="기초재고 + 입고 − 주판매 (seeding 미반영)">잔여재고<br><span style="font-size:10.5px; font-weight:500; color:#64748b;">(주판매만 반영)</span></th>
             </tr></thead><tbody>`;
         html += renderPastRows(region);
         rows.forEach((r, i) => {
@@ -1792,8 +1792,8 @@
                 <td style="color:#7c3aed; ${useFcstSales ? 'background:#f5f3ff; font-weight:600;' : ''}">${r.fcstDaily === null ? '-' : r.fcstDaily.toLocaleString()}</td>
                 <td>${r.weekSales.toLocaleString()}</td>
                 <td style="color:#b45309;">${r.weekSeed ? r.weekSeed.toLocaleString() : '-'}</td>
-                <td><strong>${r.closing.toLocaleString()}</strong></td>
-                <td style="color:${r.closingNoSeed < 0 ? '#b91c1c' : '#64748b'};">${r.closingNoSeed.toLocaleString()}</td>
+                <td>${r.closing.toLocaleString()}</td>
+                <td style="${r.closingNoSeed < 0 ? 'color:#b91c1c;' : ''}"><strong>${r.closingNoSeed.toLocaleString()}</strong></td>
             </tr>`;
         });
         html += `</tbody></table>`;
