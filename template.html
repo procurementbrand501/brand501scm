@@ -694,8 +694,8 @@
         const extra = isHeavy ? HEAVY_EXTRA_DAYS : 0;
         if (region === 'us') {
             if (days <= 45 + extra)  return `<span class="badge-air">✈️ ${daysStr}일</span>`;
-            if (days < 90 + extra)   return `<span class="badge-danger">🚨 ${daysStr}일</span>`;
-            if (days <= 120 + extra) return `<span class="badge-warning">⚠️ ${daysStr}일</span>`;
+            if (days < 120 + extra)   return `<span class="badge-danger">🚨 ${daysStr}일</span>`;
+            if (days <= 150 + extra) return `<span class="badge-warning">⚠️ ${daysStr}일</span>`;
         } else {
             if (days <= 60 + extra)  return `<span class="badge-air">✈️ ${daysStr}일</span>`;
             if (days < 180 + extra)  return `<span class="badge-danger">🚨 ${daysStr}일</span>`;

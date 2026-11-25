@@ -722,7 +722,7 @@
        항공 리드타임 10일 이하는 항공으로도 결품 가능(❗ 표시). */
     const JP_RULE = (gradeMeta && gradeMeta.jp_rule) || { safety_days: 30, air_lead_days: 10, sea_lead_days: 20 };
     const DAYS_RULE = {
-        us: { air: 45, danger: 90, warn: 120 },
+        us: { air: 45, danger: 120, warn: 150 },
         uk: { air: 60, danger: 180, warn: 210 },
         eu: { air: 60, danger: 180, warn: 210 },
         jp: { air: JP_RULE.sea_lead_days, danger: JP_RULE.safety_days, warn: Math.round(JP_RULE.safety_days * 1.5) }

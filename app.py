@@ -1175,6 +1175,7 @@ def build_heavy_codes(master_df):
 
 
 HEAVY_SAFETY_EXTRA_DAYS = 30  # 중량물 안전재고 가산 일수 (template.html의 항공 임계선 +30과 세트)
+US_SAFETY_DAYS = 120  # 미국 안전재고 일수 (2026-11-25 90→120일 변경, template_v2 DAYS_RULE.us.danger와 세트)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -2196,7 +2197,7 @@ def build_json_rows(df):
         df['is_heavy'] = False
     df['is_heavy'] = df['is_heavy'].fillna(False).astype(bool)
     heavy_extra = df['is_heavy'].astype(int) * HEAVY_SAFETY_EXTRA_DAYS
-    df['us_safety'] = df['us_sales'] * (90 + heavy_extra)
+    df['us_safety'] = df['us_sales'] * (US_SAFETY_DAYS + heavy_extra)
     df['uk_safety'] = df['uk_sales'] * (180 + heavy_extra)
     df['eu_safety'] = df['eu_sales'] * (180 + heavy_extra)
 
